@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Final Frontier</title>
+    <style>
+      body { background: #0a0a0c; color: #ccc; margin: 0; font-family: monospace; }
+      h1 { font-size: 14px; text-align: center; padding: 8px; margin: 0; color: #8ad; letter-spacing: 2px; }
+      canvas { display: block; margin: 6px auto; background: #000; image-rendering: pixelated; }
+      #status { text-align: center; color: #fe9; font-size: 13px; min-height: 18px; }
+      p { text-align: center; color: #777; font-size: 12px; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <h1>T H E &nbsp; F I N A L &nbsp; F R O N T I E R</h1>
+    <canvas id="game" width="320" height="112"></canvas>
+    <div id="status">connecting…</div>
+    <p>
+      Move with arrow keys or W A S D. Each browser tab is a separate crew member on one
+      authoritative station server.<br />
+      Open this page in a second tab to join as another crew member.
+    </p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

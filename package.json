@@ -8,6 +8,7 @@
     "server": "tsx server/index.ts",
     "proof": "tsx server/atmos-proof.ts",
     "proof:breathing": "tsx server/breathing-proof.ts",
+    "proof:net": "tsx server/net-proof.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
