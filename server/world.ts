@@ -15,6 +15,9 @@ import { registerContent } from './content';
 import { buildStation, buildFixtureStation, type Station, type FixtureStation } from './station';
 import { registerAtmos } from './atmos';
 import { registerBreathing } from './breathing';
+import { registerItems } from './items';
+import { registerOpenable } from './openable';
+import { registerUseOn } from './useon';
 import { config, type Config } from './config';
 
 export interface GameWorld {
@@ -31,10 +34,17 @@ export interface FixtureWorld {
 function assemble<S>(seed: number, build: (world: World, config: Config) => S): { world: World; station: S } {
   const engineConfig = {
     ...defaultConfig,
-    movement: { ...defaultConfig.movement, bumpToAttack: false },
+    movement: {
+      ...defaultConfig.movement,
+      bumpToAttack: false, // intent-based combat: a bump is a swap/block, never an attack (R7)
+      passable: [...defaultConfig.movement.passable, 'walkover'], // open doors are walkable
+    },
   };
   const world = createWorld({ config: engineConfig, rng: seed });
 
+  registerItems(world); // component schemas (tags/tool) before any entity carries them
+  registerOpenable(world); // openable component + on:bump rule + handler
+  registerUseOn(world); // useOn handler + tool rules (crowbar, emag)
   registerContent(world);
   const station = build(world, config);
   registerAtmos(world, config);

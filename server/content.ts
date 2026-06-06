@@ -6,18 +6,11 @@
  * (fail-loud). `airtight` blocks airflow; `wire` marks the power network's member
  * cells (R3, used later). `walkable`/`transparent` are core flags (bits 0,1).
  *
- * Doors are ENTITIES, not tiles — v0 doors carry access/power/bolt state a tile
- * can't hold — so a closed door contributes the `airtight` flag via a `tileFlags`
- * component, toggled by mutate-then-`invalidateCell` (game-design §7, R1/R7).
+ * Doors/lockers are ENTITIES (they carry access/power/bolt state a tile can't
+ * hold) — see `openable.ts` for `placeDoor`/`placeLocker` and the `on:bump` rule.
  */
-import { createEntity, pointOf, type World, type EntityId, type Entity } from '../../rlkit/src/index';
+import { createEntity, pointOf, type World, type EntityId } from '../../rlkit/src/index';
 import type { Config } from './config';
-
-/** Mutate an entity's renderable glyph in place (door open/closed visuals). */
-function setGlyph(e: Entity, glyph: string): void {
-  const r = e.components.get('renderable') as { type: 'renderable'; glyph: string } | undefined;
-  if (r) r.glyph = glyph;
-}
 
 /** Game-registered tile flags (on top of core walkable/transparent). */
 export const FLAGS = { airtight: 'airtight', wire: 'wire' } as const;
@@ -48,66 +41,6 @@ export function registerContent(world: World): void {
 }
 
 /**
- * Place a door entity at a cell: an airtight, sight-blocking obstacle when
- * closed. `open`/`close` flip the `airtight` contribution in place and invalidate
- * the one cell so the atmos stepper sees the change on its next sweep.
- */
-export interface Door {
-  readonly id: EntityId;
-  readonly cell: number;
-  readonly access?: string;
-  open(world: World): void;
-  close(world: World): void;
-  isOpen(): boolean;
-}
-
-export function placeDoor(world: World, levelId: string, cell: number, opts: { id: string; access?: string } ): Door {
-  const level = world.state.levels.get(levelId)!;
-  const { x, y } = pointOf(cell, level.width);
-  const e = createEntity(
-    opts.id,
-    [
-      { type: 'position', x, y, levelId },
-      { type: 'renderable', glyph: '+', fg: '#b85', layer: 4 },
-      { type: 'info', name: 'airlock' },
-      // Closed door seals: contributes airtight at its cell.
-      { type: 'tileFlags', flags: [FLAGS.airtight] },
-    ],
-  );
-  world.state.entities.set(opts.id, e);
-  world.services.queries.index(e);
-  world.services.queries.place(opts.id, levelId, cell);
-
-  let open = false;
-  const setFlags = (names: string[]) => {
-    const tf = e.components.get('tileFlags') as { type: 'tileFlags'; flags: string[] } | undefined;
-    if (tf) tf.flags = names;
-    world.services.flagIndex.forLevel(levelId).invalidateCell(cell);
-  };
-  return {
-    id: opts.id,
-    cell,
-    ...(opts.access !== undefined ? { access: opts.access } : {}),
-    isOpen: () => open,
-    open(w) {
-      if (open) return;
-      open = true;
-      // Open door: stops sealing (airflow + sight pass). Render as an open airlock.
-      setGlyph(e, "'");
-      void w;
-      setFlags([]);
-    },
-    close(w) {
-      if (!open) return;
-      open = false;
-      setGlyph(e, '+');
-      void w;
-      setFlags([FLAGS.airtight]);
-    },
-  };
-}
-
-/**
  * Spawn a crew actor at a cell: a breathing, oxygen-bearing entity that paces the
  * timeline and suffocates in vacuum (the `breather` mixin, registered separately
  * by `registerBreathing`). `max-hp` is authored content; `max-oxygen` reads from
@@ -135,6 +68,7 @@ export function spawnCrew(
       { type: 'stats', base: { 'max-hp': 100, 'max-oxygen': config.oxygen.max } },
       { type: 'resources', pools: { hp: { current: 100 }, oxygen: { current: config.oxygen.max } } },
       { type: 'breathing', last: now, tankUntil: 0 },
+      { type: 'inventory', items: [] }, // carries ID + tools (full inventory is Epic F)
     ],
     ['breather'],
   );

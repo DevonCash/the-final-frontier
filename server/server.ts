@@ -111,6 +111,16 @@ const DECODERS: Record<string, Decoder> = {
     const dir = unitDir(msg.dir);
     return dir ? { type: 'move', actor, dir } : null;
   },
+  // Tool-on-target (R5): a sanitized discriminated target + optional held item.
+  // The game registers the `useOn` handler + tool rules; this only validates input.
+  useOn: (msg, actor) => {
+    const t = msg.target as { kind?: unknown; id?: unknown; cell?: unknown } | undefined;
+    if (!t || typeof t !== 'object') return null;
+    const item = typeof msg.item === 'string' ? { item: msg.item } : {};
+    if (t.kind === 'entity' && typeof t.id === 'string') return { type: 'useOn', actor, ...item, target: { kind: 'entity', id: t.id } };
+    if (t.kind === 'cell' && Number.isInteger(t.cell)) return { type: 'useOn', actor, ...item, target: { kind: 'cell', cell: t.cell as number } };
+    return null;
+  },
 };
 
 /** Only accept browser clients from localhost; node clients (tests) send no Origin. */

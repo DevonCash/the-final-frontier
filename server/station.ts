@@ -27,7 +27,8 @@ import {
   type World,
   type Level,
 } from '../../rlkit/src/index';
-import { TILES, placeDoor, type Door } from './content';
+import { TILES } from './content';
+import { placeDoor, type Door } from './openable';
 import type { Config } from './config';
 
 export const LEVEL_ID = 'station';

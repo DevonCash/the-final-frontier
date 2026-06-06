@@ -10,6 +10,7 @@
     "proof:breathing": "tsx server/breathing-proof.ts",
     "proof:net": "tsx server/net-proof.ts",
     "proof:station": "tsx server/station-proof.ts",
+    "proof:interaction": "tsx server/interaction-proof.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
