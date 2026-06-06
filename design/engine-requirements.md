@@ -87,6 +87,18 @@ Blocking order: **R1, R2** block atmosphere (the slice's heart) · **R3** blocks
 
 ---
 
+## R8 — Conditional per-actor tick hook (surfaced building Epic A; engine-accepted)
+
+**Goal:** breathing — each actor turn, sample the pressure at the actor's own cell and drain O₂ in vacuum or regen it in air, then bleed HP at zero (game-design §5). More generally: any per-actor effect whose magnitude/direction depends on the actor's components, position, or tile.
+
+**Why it's a requirement, not game code:** the per-actor clock (`tickActor`) only applied *fixed-amount* `regen` and status `onTick` deltas — no conditional logic. And every driver loop (`step`, `tickRealtime`, `tickRealtimeMulti`) calls `tickActor` internally, so a game has no seam to wrap from outside. The hook had to live where the per-actor turn is processed.
+
+**Resolution (engine-accepted, shipped):** a new optional `Mixin.onActorTick(self, world): GameEvent[]`, run inside `tickActor`'s mutation pass after the built-in regen + status tick, once per actor turn, in the entity's declared mixin order. It is the one mutating mixin hook (it shares `tickActor`'s mutation context, so it mutates via `changeResource` directly, not the effect pipeline) and folds its events into `tickActor`'s return — which the driver already runs through `runReactions`, so emitting `died` unschedules the actor via the existing death reactor. A mixin, not a global registry: applicability is component-gated and persists as entity data (the mixin name on the entity, saved/loaded), and only tagged entities pay the cost. Ordering is fixed (regen → statuses → hooks); a "before statuses" need would be a later priority field.
+
+**Acceptance sketch:** a mixin's `onActorTick` fires exactly once per actor turn under both `step` and `tickRealtime`, only for entities carrying it, even with no active statuses; a hook emitting `died` removes the actor from the timeline; two mixins fire in declared order.
+
+---
+
 ## Resolution status
 
 | Req | State | Notes |
@@ -98,6 +110,7 @@ Blocking order: **R1, R2** block atmosphere (the slice's heart) · **R3** blocks
 | R5 | accepted | `ActionMap`/`EventMap` merge; discriminated `{kind:'entity'\|'cell'}` target. |
 | R6 | accepted | `PlayerView<E>` + `viewExtra`, viewer-only contract. |
 | R7 | accepted | `on:bump` channel; attack → combat module rule. |
+| R8 | accepted | `Mixin.onActorTick(self, world): GameEvent[]` — conditional per-actor tick; mutates via `changeResource`, runs after regen+statuses, component-gated. |
 
 **Calibration handshake (resolved):** `ticksPerSecond` is a game constant (no engine const), set to **25**, coupled to the action economy (`moveCost ÷ speed` ticks/action). Global env rates → world-tick steppers; per-actor rates → per-actor status ticks; see game-design §9.
 
