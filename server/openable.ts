@@ -31,6 +31,7 @@ import {
   type ActionHandler,
   type ActionContext,
   type BumpInteraction,
+  type Component,
   type ComponentRegistry,
   type Registry,
 } from '../../rlkit/src/index';
@@ -74,8 +75,12 @@ export function setOpen(world: World, id: EntityId, open: boolean): GameEvent[] 
   if (o.kind === 'door' && pos) {
     const tf = e.components.get('tileFlags') as { type: 'tileFlags'; flags: string[] } | undefined;
     if (tf) tf.flags = open ? [] : [FLAGS.airtight];
+    // Toggle the `walkover` passable marker around a reindex so the component
+    // index (not just the live `has` read in the mover) stays correct.
+    world.services.queries.unindex(e);
     if (open) set(e, { type: 'walkover' }); // open door: passable cell
     else remove(e, 'walkover');
+    world.services.queries.index(e);
     const level = world.state.levels.get(pos.levelId);
     if (level) world.services.flagIndex.forLevel(pos.levelId).invalidateCell(cellOf({ x: pos.x, y: pos.y }, level.width));
   }
@@ -130,7 +135,7 @@ interface PlaceOpts {
 function placeOpenable(world: World, levelId: string, cell: number, kind: 'door' | 'locker', opts: PlaceOpts): Entity {
   const level = world.state.levels.get(levelId)!;
   const { x, y } = pointOf(cell, level.width);
-  const components: Array<Record<string, unknown>> = [
+  const components: Component[] = [
     { type: 'position', x, y, levelId },
     { type: 'renderable', glyph: GLYPH[kind].closed, fg: kind === 'door' ? '#b85' : '#9b7', layer: 4 },
     { type: 'info', name: kind === 'door' ? 'airlock' : 'locker' },
@@ -145,7 +150,7 @@ function placeOpenable(world: World, levelId: string, cell: number, kind: 'door'
     },
   ];
   if (kind === 'door') components.push({ type: 'tileFlags', flags: [FLAGS.airtight] }); // closed door seals
-  const e = createEntity(opts.id, components as never);
+  const e = createEntity(opts.id, components);
   world.state.entities.set(opts.id, e);
   world.services.queries.index(e);
   world.services.queries.place(opts.id, levelId, cell);
@@ -218,7 +223,10 @@ function openOnBump(ctx: ActionContext): void {
     ctx.push(announce({ type: 'access:denied', actor: ctx.action.actor, target: action.target, cell, reason }));
   };
 
-  if (o.open) return void ctx.reject('bump: already open'); // open doors are passable; lockers re-close via useOn later
+  if (o.open) {
+    ctx.cost = 0; // bumping an already-open openable is a free no-op (doors are passable anyway)
+    return;
+  }
   if (o.broken) {
     ctx.push(openableEffect(action.target, true));
     return;

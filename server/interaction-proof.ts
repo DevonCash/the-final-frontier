@@ -106,5 +106,22 @@ const bumpEast = (w: World) => perform(w, { type: 'move', actor: 'actor', dir: {
   check('crowbar pries the locker', openableOf(a.world, 'locker').open);
 }
 
+// --- (5) authoritative: useOn rejects unowned tools and non-adjacent targets ---
+{
+  console.log('(5) anti-cheat: useOn needs a carried tool and an adjacent target');
+  const a = scene();
+
+  // Ownership: an emag exists but the actor does not carry it.
+  spawnEmag(a.world, 'loose-emag', config.emagCharges);
+  const unowned = perform(a.world, { type: 'useOn', actor: 'actor', item: 'loose-emag', target: { kind: 'entity', id: a.doorId } });
+  check('useOn with an uncarried tool is rejected', unowned.status === 'rejected' && !openableOf(a.world, a.doorId).open);
+
+  // Adjacency: a carried crowbar can't reach a far locker (roomB).
+  giveItem(a.world, 'actor', spawnCrowbar(a.world, 'bar3'));
+  placeLocker(a.world, LEVEL_ID, a.doorCell + 5, { id: 'far-locker' }); // deep in the other room
+  const far = perform(a.world, { type: 'useOn', actor: 'actor', item: 'bar3', target: { kind: 'entity', id: 'far-locker' } });
+  check('useOn on a non-adjacent target is rejected', far.status === 'rejected' && !openableOf(a.world, 'far-locker').open);
+}
+
 console.log(failures === 0 ? '\nALL INTERACTION PROOFS PASS' : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

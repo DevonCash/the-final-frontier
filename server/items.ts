@@ -15,6 +15,7 @@ import {
   type ReadonlyWorld,
   type EntityId,
   type Effect,
+  type Component,
   type ComponentRegistry,
 } from '../../rlkit/src/index';
 
@@ -56,14 +57,14 @@ interface ItemSpec {
 
 /** Create a carried item entity (no position; lives in an inventory). */
 export function spawnItem(world: World, spec: ItemSpec): EntityId {
-  const components: Array<Record<string, unknown>> = [
+  const components: Component[] = [
     { type: 'item', name: spec.name, stackable: false, qty: 1 },
     { type: 'renderable', glyph: spec.glyph, fg: spec.fg ?? '#ddd', layer: 3 },
     { type: 'info', name: spec.name },
   ];
   if (spec.tags) components.push({ type: 'tags', tags: spec.tags });
   if (spec.tool) components.push({ type: 'tool', kind: spec.tool.kind, ...(spec.tool.charges !== undefined ? { charges: spec.tool.charges } : {}) });
-  const e = createEntity(spec.id, components as never);
+  const e = createEntity(spec.id, components);
   world.state.entities.set(spec.id, e);
   world.services.queries.index(e); // indexes tags so byTag works; no `place` (carried)
   return spec.id;
@@ -97,6 +98,11 @@ export function giveItem(world: World, actorId: EntityId, itemId: EntityId): voi
   else e.components.set('inventory', { type: 'inventory', items: [itemId] });
 }
 
+/** True if the actor is currently carrying `itemId` (authoritative ownership check). */
+export function carries(world: ReadonlyWorld, actorId: EntityId, itemId: EntityId): boolean {
+  return inventoryOf(world, actorId).includes(itemId);
+}
+
 /** True if the actor carries an ID granting `access` (tag `access:<access>`). */
 export function hasAccess(world: ReadonlyWorld, actorId: EntityId, access: string): boolean {
   const want = `access:${access}`;
@@ -116,13 +122,19 @@ export function findTool(world: ReadonlyWorld, actorId: EntityId, kind: string):
   return undefined;
 }
 
+/** Read a tool component off an entity id, if present. */
+function toolOf(world: ReadonlyWorld, toolId: EntityId): Tool | undefined {
+  const e = world.state.entities.get(toolId);
+  return e && get<Tool>(e, 'tool');
+}
+
 /** An effect that spends one charge of a tool (e.g. the emag), rejecting if empty. */
 export function consumeChargeEffect(toolId: EntityId): Effect {
   return {
     kind: 'tool:charge',
-    validate: (world) => ((get<Tool>(world.state.entities.get(toolId) ?? ({} as never), 'tool')?.charges ?? 0) > 0),
+    validate: (world) => (toolOf(world, toolId)?.charges ?? 0) > 0,
     apply: (world) => {
-      const tool = get<Tool>(world.state.entities.get(toolId)!, 'tool');
+      const tool = toolOf(world, toolId);
       if (tool && tool.charges !== undefined) tool.charges -= 1;
       return [{ type: 'tool:used', tool: toolId, kind: tool?.kind, charges: tool?.charges }];
     },
