@@ -65,12 +65,10 @@ export function createStationServer(opts: { seed?: number; fog?: 'shared' | 'hid
   let joined = 0;
   const spawnPlayer = (w: World): EntityId => {
     const n = joined++;
-    // Prefer a designated crew spawn (dorms); fall back to any free floor cell.
-    const preferred = station.mark.spawns[n];
-    const cell =
-      preferred !== undefined && !isOccupied(w, level.id, preferred)
-        ? preferred
-        : nextFreeFloor(w, level.id, tiles, floorIdx);
+    // Prefer the first FREE designated crew spawn (dorms) so reconnects reuse
+    // vacated slots; fall back to any free floor cell only when all are taken.
+    const free = station.mark.spawns.find((s) => !isOccupied(w, level.id, s));
+    const cell = free ?? nextFreeFloor(w, level.id, tiles, floorIdx);
     return spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
   };
 

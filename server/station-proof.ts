@@ -1,12 +1,15 @@
 /**
  * station-proof — the full station is airtight by construction. Run: `npm run proof:station`.
  *
- * Two invariants on the production map (game-design §3):
- *   (1) hull-enclosed — no floor cell is 4-adjacent to a space tile (the hull,
- *       windows, and doors always sit between floor and the void).
- *   (2) sealed at spawn — flood from every space cell across non-airtight cells
- *       (airtight = hull / intact window / CLOSED door) never reaches a floor
- *       cell, so no room's air is open to space at round start.
+ * Three invariants on the production map (game-design §3):
+ *   (1) hull-enclosed — no open floor cell is 4-adjacent to a space tile (the
+ *       hull, windows, and CLOSED doors always sit between floor and the void).
+ *   (2) sealed at spawn — a flood-fill from every space cell across non-airtight
+ *       cells (airtight = hull / intact window / CLOSED door) never reaches a
+ *       floor cell, so no room's air is open to space at round start.
+ *   (3) connected — every floor cell is reachable across the floor graph (doors
+ *       are floor tiles, so they count as doorways); catches a walled-off room or
+ *       a door authored into a wall, which (1) and (2) would both miss.
  * A violation prints the offending (x,y). Also reports the map's vital stats.
  *
  * An observer actor ticks once so the composed `airtight` flag layer is current
@@ -69,28 +72,73 @@ console.log(`station: ${W}×${H}`);
 
 // --- (2) sealed at spawn ----------------------------------------------------
 {
+  // Flood-fill (DFS) outward from the void; airtight cells (hull / window /
+  // closed door) are the walls. Reaching a floor cell means air can escape.
   const seen = new Uint8Array(n);
-  const stack: number[] = [];
+  const open: number[] = [];
   for (let c = 0; c < n; c++) {
     if (tiles[c] === spaceIdx) {
       seen[c] = 1;
-      stack.push(c);
+      open.push(c);
     }
   }
   let leak = -1;
-  while (stack.length > 0 && leak < 0) {
-    const c = stack.pop()!;
+  while (open.length > 0 && leak < 0) {
+    const c = open.pop()!;
     for (const nb of neighbors4(c, W, H)) {
-      if (seen[nb] || flagIndex.hasFlagAt(nb, FLAGS.airtight)) continue; // walls/windows/closed doors block
+      if (seen[nb] || flagIndex.hasFlagAt(nb, FLAGS.airtight)) continue;
       seen[nb] = 1;
       if (tiles[nb] === floorIdx) {
         leak = nb;
         break;
       }
-      stack.push(nb);
+      open.push(nb);
     }
   }
   check('sealed at spawn (no room leaks to space)', leak < 0, leak < 0 ? '' : `air escapes at floor ${xy(leak)}`);
+}
+
+// --- (3) connected ----------------------------------------------------------
+{
+  // Flood-fill (DFS) over the floor graph from any floor cell; doors are floor
+  // tiles, so they count as doorways. Any floor not reached is a walled-off room.
+  const floor: number[] = [];
+  for (let c = 0; c < n; c++) if (tiles[c] === floorIdx) floor.push(c);
+  const seen = new Uint8Array(n);
+  const open = [floor[0]!];
+  seen[floor[0]!] = 1;
+  let reached = 1;
+  while (open.length > 0) {
+    const c = open.pop()!;
+    for (const nb of neighbors4(c, W, H)) {
+      if (seen[nb] || tiles[nb] !== floorIdx) continue;
+      seen[nb] = 1;
+      reached++;
+      open.push(nb);
+    }
+  }
+  const orphan = floor.find((c) => !seen[c]);
+  check(
+    'connected (every floor cell reachable)',
+    reached === floor.length,
+    orphan === undefined ? `${floor.length} floor cells` : `${floor.length - reached} unreachable, e.g. ${xy(orphan)}`,
+  );
+}
+
+// --- (4) wire on floor ------------------------------------------------------
+{
+  // Every wire cell must be floor — the power network (Epic E) only powers floor
+  // consumers, so a wire glyph drifting onto a wall/space would be dead.
+  const wire = level.layers.get('wire') as Uint8Array | undefined;
+  let count = 0;
+  let stray = -1;
+  for (let c = 0; c < n; c++) {
+    if (wire?.[c]) {
+      count++;
+      if (tiles[c] !== floorIdx) stray = c;
+    }
+  }
+  check('wire spine on floor', count > 0 && stray < 0, stray < 0 ? `${count} wire cells` : `wire off floor at ${xy(stray)}`);
 }
 
 console.log(failures === 0 ? '\nALL STATION PROOFS PASS' : `\n${failures} CHECK(S) FAILED`);

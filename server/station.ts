@@ -13,9 +13,10 @@
  * Legend (full map):
  *   '~' space      '#' hull        '.' floor       '%' window (breakable)
  *   '+' airlock    'A' shuttle airlock   'E' external (EVA) airlock
+ *   '=' floor carrying the power wire (the corridor spine)
  *   'v' vent       's' crew spawn  'C' captain spawn   'L' locker   'G' generator
- * Every glyph but space/hull/window decodes to a floor tile; the rest are marks or
- * entities placed on that floor. Wire is laid in code along the corridors.
+ * Every glyph but space/hull/window decodes to a floor tile; the rest are marks,
+ * wire, or entities placed on that floor (one source of truth — the map).
  */
 import {
   createLevel,
@@ -38,6 +39,7 @@ const CHAR_TILE: Record<string, string> = {
   '%': TILES.window,
   '.': TILES.floor,
   '+': TILES.floor,
+  '=': TILES.floor,
   A: TILES.floor,
   E: TILES.floor,
   v: TILES.floor,
@@ -107,22 +109,22 @@ function placeDoors(
 const STATION_MAP: readonly string[] = [
   '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
   '~#########################%%%%%%%##############~',
-  '~#...................#..#.........#...........#~',
-  '~#...v...............#..#....v....#.....v.....#~',
-  '~#...................+..+.........#..s.s.s.s..#~',
-  '~#......G............#..#..C...L..#...........#~',
-  '~#...................#..#.........#..s.s......#~',
-  '~#...................#..#.........#...........#~',
-  '~#####################..################+######~',
-  '~#............................................#~',
-  '~#............................................#~',
-  '~#########+###########..######+############A###~',
-  '~#...................#..#...............#.....#~',
-  '~#...................#..#...............#.....#~',
-  '~#...................#..#...............#.....#~',
-  '~#...v...............#..#.....v.........#..v..#~',
-  '~#...................#..#...............#.....#~',
-  '~#...................#..#...............#.....#~',
+  '~#...................#==#.........#...........#~',
+  '~#...v...............#==#....v....#.....v.....#~',
+  '~#...................+==+.........#..s.s.s.s..#~',
+  '~#......G............#==#..C...L..#...........#~',
+  '~#...................#==#.........#..s.s......#~',
+  '~#...................#==#.........#...........#~',
+  '~#####################==################+######~',
+  '~#============================================#~',
+  '~#============================================#~',
+  '~#########+###########==######+############A###~',
+  '~#...................#==#...............#.....#~',
+  '~#...................#==#...............#.....#~',
+  '~#...................#==#...............#.....#~',
+  '~#...v...............#==#.....v.........#..v..#~',
+  '~#...................#==#...............#.....#~',
+  '~#...................#==#...............#.....#~',
   '~#####################E########################~',
   '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
 ];
@@ -149,7 +151,10 @@ export function buildStation(world: World, config: Config): Station {
   const level = layTiles(world, config, STATION_MAP);
   const { doors, shuttle, external } = placeDoors(world, level, STATION_MAP);
 
-  // Collect marks from the glyphs.
+  // Collect marks and the wire layer from the glyphs (one source of truth — the
+  // map). The power network (Epic E) reads `wire`; routing to the generator and
+  // consumers is refined there.
+  const wire = ensureU8Layer(level, 'wire');
   const spawns: number[] = [];
   const vents: number[] = [];
   let captainSpawn: number | undefined;
@@ -164,17 +169,10 @@ export function buildStation(world: World, config: Config): Station {
         case 'C': captainSpawn = cell; break;
         case 'G': generator = cell; break;
         case 'L': locker = cell; break;
+        case '=': wire[cell] = 1; break;
       }
     }
   }
-
-  // Wire spine: the vertical (cols 22–23, rows 2–17) and horizontal (rows 9–10)
-  // corridor runs. The power network (Epic E) reads this layer; routing to the
-  // generator/consumers is refined there.
-  const wire = ensureU8Layer(level, 'wire');
-  const mark1 = (x: number, y: number) => (wire[levelCell(level, x, y)] = 1);
-  for (let y = 2; y <= 17; y++) { mark1(22, y); mark1(23, y); }
-  for (let x = 2; x <= 45; x++) { mark1(x, 9); mark1(x, 10); }
 
   const mark: StationMarks = {
     spawns,
