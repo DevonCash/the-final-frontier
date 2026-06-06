@@ -12,7 +12,7 @@
  * Assertions are plain; the script exits non-zero on first failure.
  */
 import { tickRealtime, setTileEffect, get, type World } from '../../rlkit/src/index';
-import { buildGameWorld } from './world';
+import { buildFixtureWorld } from './world';
 import { LEVEL_ID } from './station';
 import { TILES, spawnCrew } from './content';
 import { activateTank } from './breathing';
@@ -26,7 +26,7 @@ interface Pools {
 }
 
 function fresh() {
-  const gw = buildGameWorld();
+  const gw = buildFixtureWorld();
   spawnCrew(gw.world, LEVEL_ID, gw.station.mark.roomB, { id: CREW }, config);
   return gw;
 }

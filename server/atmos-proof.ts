@@ -18,14 +18,14 @@ import {
   setTileEffect,
   type World,
 } from '../../rlkit/src/index';
-import { buildGameWorld } from './world';
+import { buildFixtureWorld } from './world';
 import { LEVEL_ID } from './station';
 import { TILES } from './content';
 
 const OBS = 'obs';
 
 function fresh(seed = 1) {
-  const gw = buildGameWorld(seed);
+  const gw = buildFixtureWorld(seed);
   gw.world.services.timeline.addActor(OBS, 100); // something for the driver to pace
   return gw;
 }

@@ -1,19 +1,26 @@
 /**
- * station — the hand-authored station prefab: ASCII art → a `Level`.
+ * station — hand-authored station prefabs: ASCII art → a `Level`.
  *
- * The map is one editable constant. Each char maps to a tile (or a tile + an
- * entity placed on it). v0 proof layout: two sealed rooms joined by an airlock
- * (entity door), roomB's outer hull carries a window to space (the breach test).
- * Grow `MAP` toward the full game-design §3 station without touching the decoder.
+ * Two maps share one decoder:
+ *  - `buildStation` lays the FULL game-design §3 station (the production map the
+ *    server runs): bridge+windows+locker, engineering+generator, storage, dorms,
+ *    bar, arrivals+shuttle airlock, a corridor spine, and an external airlock,
+ *    with vents per room and a wire spine through the corridors.
+ *  - `buildFixtureStation` lays the original minimal two-room world, kept as a
+ *    controlled fixture for the atmos/breathing SYSTEM proofs so growing the real
+ *    station never perturbs those regressions (the epics are independent).
  *
- * Legend:
- *   '~' space (void, pressure sink)     '#' hull (airtight wall)
- *   '.' floor (holds air)               '%' window (airtight, smashes to space)
- *   '+' airlock door (floor + door entity)
+ * Legend (full map):
+ *   '~' space      '#' hull        '.' floor       '%' window (breakable)
+ *   '+' airlock    'A' shuttle airlock   'E' external (EVA) airlock
+ *   'v' vent       's' crew spawn  'C' captain spawn   'L' locker   'G' generator
+ * Every glyph but space/hull/window decodes to a floor tile; the rest are marks or
+ * entities placed on that floor. Wire is laid in code along the corridors.
  */
 import {
   createLevel,
   ensureFloatLayer,
+  ensureU8Layer,
   levelCell,
   setTile,
   type World,
@@ -24,8 +31,170 @@ import type { Config } from './config';
 
 export const LEVEL_ID = 'station';
 
-// 20×7. Door at (8,3) divides roomA (x2..7) from roomB (x9..17); window at (18,3).
-const MAP = [
+/** Glyph → tile id. Marks/entities (door, vent, spawn, …) all sit on a floor tile. */
+const CHAR_TILE: Record<string, string> = {
+  '~': TILES.space,
+  '#': TILES.hull,
+  '%': TILES.window,
+  '.': TILES.floor,
+  '+': TILES.floor,
+  A: TILES.floor,
+  E: TILES.floor,
+  v: TILES.floor,
+  s: TILES.floor,
+  C: TILES.floor,
+  L: TILES.floor,
+  G: TILES.floor,
+};
+const DOOR_CHARS = new Set(['+', 'A', 'E']);
+
+/** Validate a map is rectangular and lay its tiles + pressure; return the level. */
+function layTiles(world: World, config: Config, map: readonly string[]): Level {
+  const height = map.length;
+  const width = map[0]!.length;
+  for (let y = 0; y < height; y++) {
+    if (map[y]!.length !== width) {
+      throw new Error(`station map row ${y} is ${map[y]!.length} wide, expected ${width}`);
+    }
+  }
+  const floorIdx = world.services.tiles.index(TILES.floor);
+  const level = createLevel(LEVEL_ID, width, height, floorIdx);
+  world.state.levels.set(LEVEL_ID, level);
+
+  const pressure = ensureFloatLayer(level, 'pressure');
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const ch = map[y]![x]!;
+      const tileId = CHAR_TILE[ch] ?? TILES.floor;
+      const cell = levelCell(level, x, y);
+      setTile(level, cell, world.services.tiles.index(tileId));
+      if (tileId === TILES.floor) pressure[cell] = config.atmos.nominalPressure;
+    }
+  }
+  return level;
+}
+
+/** Place a door for every door glyph; return them with the special doors flagged. */
+function placeDoors(
+  world: World,
+  level: Level,
+  map: readonly string[],
+): { doors: Door[]; shuttle?: number; external?: number } {
+  const doors: Door[] = [];
+  let shuttle: number | undefined;
+  let external: number | undefined;
+  let n = 0;
+  for (let y = 0; y < map.length; y++) {
+    for (let x = 0; x < level.width; x++) {
+      const ch = map[y]![x]!;
+      if (!DOOR_CHARS.has(ch)) continue;
+      const cell = levelCell(level, x, y);
+      doors.push(placeDoor(world, LEVEL_ID, cell, { id: `door-${n++}` }));
+      if (ch === 'A') shuttle = cell;
+      if (ch === 'E') external = cell;
+    }
+  }
+  return { doors, ...(shuttle !== undefined ? { shuttle } : {}), ...(external !== undefined ? { external } : {}) };
+}
+
+// ===========================================================================
+// Full station (production)
+// ===========================================================================
+
+// 48×20. Corridor spine: vertical cols 22–23 (rows 2–17) crossed by a horizontal
+// run (rows 9–10). Rooms hang off the spine; the bridge's north hull carries the
+// windows; the external airlock (E) is the EVA route through the south hull.
+const STATION_MAP: readonly string[] = [
+  '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
+  '~#########################%%%%%%%##############~',
+  '~#...................#..#.........#...........#~',
+  '~#...v...............#..#....v....#.....v.....#~',
+  '~#...................+..+.........#..s.s.s.s..#~',
+  '~#......G............#..#..C...L..#...........#~',
+  '~#...................#..#.........#..s.s......#~',
+  '~#...................#..#.........#...........#~',
+  '~#####################..################+######~',
+  '~#............................................#~',
+  '~#............................................#~',
+  '~#########+###########..######+############A###~',
+  '~#...................#..#...............#.....#~',
+  '~#...................#..#...............#.....#~',
+  '~#...................#..#...............#.....#~',
+  '~#...v...............#..#.....v.........#..v..#~',
+  '~#...................#..#...............#.....#~',
+  '~#...................#..#...............#.....#~',
+  '~#####################E########################~',
+  '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
+];
+
+/** Named cells/sites for spawns, tests, and downstream epics (power/round). */
+export interface StationMarks {
+  readonly spawns: number[]; // crew spawn cells (dorms)
+  readonly captainSpawn?: number; // bridge
+  readonly vents: number[]; // one per room
+  readonly generator?: number; // engineering
+  readonly locker?: number; // bridge
+  readonly shuttleDoor?: number; // arrivals airlock
+  readonly externalAirlock?: number; // EVA airlock through the south hull
+}
+
+export interface Station {
+  readonly level: Level;
+  readonly doors: Door[];
+  readonly mark: StationMarks;
+}
+
+/** Build the full production station: tiles, pressure, doors, marks, wire spine. */
+export function buildStation(world: World, config: Config): Station {
+  const level = layTiles(world, config, STATION_MAP);
+  const { doors, shuttle, external } = placeDoors(world, level, STATION_MAP);
+
+  // Collect marks from the glyphs.
+  const spawns: number[] = [];
+  const vents: number[] = [];
+  let captainSpawn: number | undefined;
+  let generator: number | undefined;
+  let locker: number | undefined;
+  for (let y = 0; y < STATION_MAP.length; y++) {
+    for (let x = 0; x < level.width; x++) {
+      const cell = levelCell(level, x, y);
+      switch (STATION_MAP[y]![x]) {
+        case 's': spawns.push(cell); break;
+        case 'v': vents.push(cell); break;
+        case 'C': captainSpawn = cell; break;
+        case 'G': generator = cell; break;
+        case 'L': locker = cell; break;
+      }
+    }
+  }
+
+  // Wire spine: the vertical (cols 22–23, rows 2–17) and horizontal (rows 9–10)
+  // corridor runs. The power network (Epic E) reads this layer; routing to the
+  // generator/consumers is refined there.
+  const wire = ensureU8Layer(level, 'wire');
+  const mark1 = (x: number, y: number) => (wire[levelCell(level, x, y)] = 1);
+  for (let y = 2; y <= 17; y++) { mark1(22, y); mark1(23, y); }
+  for (let x = 2; x <= 45; x++) { mark1(x, 9); mark1(x, 10); }
+
+  const mark: StationMarks = {
+    spawns,
+    vents,
+    ...(captainSpawn !== undefined ? { captainSpawn } : {}),
+    ...(generator !== undefined ? { generator } : {}),
+    ...(locker !== undefined ? { locker } : {}),
+    ...(shuttle !== undefined ? { shuttleDoor: shuttle } : {}),
+    ...(external !== undefined ? { externalAirlock: external } : {}),
+  };
+  return { level, doors, mark };
+}
+
+// ===========================================================================
+// Minimal fixture (atmos / breathing system proofs)
+// ===========================================================================
+
+// Two sealed rooms joined by an airlock; roomB's outer hull carries a window to
+// space (the breach test). Door at (8,3) divides roomA (x2..7) from roomB (x9..17).
+const FIXTURE_MAP: readonly string[] = [
   '~~~~~~~~~~~~~~~~~~~~',
   '~##################~',
   '~#......#.........#~',
@@ -35,16 +204,7 @@ const MAP = [
   '~~~~~~~~~~~~~~~~~~~~',
 ];
 
-const CHAR_TILE: Record<string, string> = {
-  '~': TILES.space,
-  '#': TILES.hull,
-  '.': TILES.floor,
-  '%': TILES.window,
-  '+': TILES.floor, // the door is an entity ON a floor cell
-};
-
-/** Named cells for tests / spawns. */
-export interface StationMarks {
+export interface FixtureMarks {
   readonly roomA: number;
   readonly roomB: number;
   readonly door: number;
@@ -52,58 +212,22 @@ export interface StationMarks {
   readonly spaceOutsideWindow: number;
 }
 
-export interface Station {
+export interface FixtureStation {
   readonly level: Level;
   readonly doors: Door[];
-  readonly mark: StationMarks;
+  readonly mark: FixtureMarks;
 }
 
-/** Build the station level into the world: tiles, the pressure layer, door entities. */
-export function buildStation(world: World, config: Config): Station {
-  const height = MAP.length;
-  const width = MAP[0]!.length;
-  const floorIdx = world.services.tiles.index(TILES.floor);
-  const level = createLevel(LEVEL_ID, width, height, floorIdx);
-  world.state.levels.set(LEVEL_ID, level);
-
-  // Lay tiles from the art.
-  for (let y = 0; y < height; y++) {
-    const row = MAP[y]!;
-    for (let x = 0; x < width; x++) {
-      const ch = row[x]!;
-      const tileId = CHAR_TILE[ch] ?? TILES.floor;
-      setTile(level, levelCell(level, x, y), world.services.tiles.index(tileId));
-    }
-  }
-
-  // Pressure layer: interior floor at nominal, everything else (hull/space/window) 0.
-  const pressure = ensureFloatLayer(level, 'pressure');
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const ch = MAP[y]![x]!;
-      if (ch === '.' || ch === '+') pressure[levelCell(level, x, y)] = config.atmos.nominalPressure;
-    }
-  }
-
-  // Place door entities (after tiles + pressure; the flag index captures them on
-  // its first build, which the atmos stepper triggers on its first sweep).
-  const doors: Door[] = [];
-  let doorN = 0;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (MAP[y]![x] === '+') {
-        doors.push(placeDoor(world, LEVEL_ID, levelCell(level, x, y), { id: `door-${doorN++}` }));
-      }
-    }
-  }
-
-  const mark = {
+/** Build the minimal two-room fixture used by the atmos/breathing proofs. */
+export function buildFixtureStation(world: World, config: Config): FixtureStation {
+  const level = layTiles(world, config, FIXTURE_MAP);
+  const { doors } = placeDoors(world, level, FIXTURE_MAP);
+  const mark: FixtureMarks = {
     roomA: levelCell(level, 4, 3),
     roomB: levelCell(level, 13, 3),
     door: levelCell(level, 8, 3),
     window: levelCell(level, 18, 3),
     spaceOutsideWindow: levelCell(level, 19, 3),
   };
-
   return { level, doors, mark };
 }

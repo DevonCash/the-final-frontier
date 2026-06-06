@@ -41,16 +41,16 @@ export interface StationServer {
   viewport: Viewport;
 }
 
+/** Whether any entity occupies a cell. */
+function isOccupied(world: World, levelId: string, cell: number): boolean {
+  for (const _ of world.services.queries.at(cell, levelId)) return true;
+  return false;
+}
+
 /** The next unoccupied floor cell on the level (row-major) — a deterministic spawn slot. */
 function nextFreeFloor(world: World, levelId: string, tiles: Uint16Array, floorIdx: number): number {
   for (let c = 0; c < tiles.length; c++) {
-    if (tiles[c] !== floorIdx) continue;
-    let occupied = false;
-    for (const _ of world.services.queries.at(c, levelId)) {
-      occupied = true;
-      break;
-    }
-    if (!occupied) return c;
+    if (tiles[c] === floorIdx && !isOccupied(world, levelId, c)) return c;
   }
   throw new Error('nextFreeFloor: no unoccupied floor cell left to spawn a crew member');
 }
@@ -65,7 +65,12 @@ export function createStationServer(opts: { seed?: number; fog?: 'shared' | 'hid
   let joined = 0;
   const spawnPlayer = (w: World): EntityId => {
     const n = joined++;
-    const cell = nextFreeFloor(w, level.id, tiles, floorIdx);
+    // Prefer a designated crew spawn (dorms); fall back to any free floor cell.
+    const preferred = station.mark.spawns[n];
+    const cell =
+      preferred !== undefined && !isOccupied(w, level.id, preferred)
+        ? preferred
+        : nextFreeFloor(w, level.id, tiles, floorIdx);
     return spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
   };
 
