@@ -1,0 +1,21 @@
+{
+  "name": "the-final-frontier",
+  "private": true,
+  "type": "module",
+  "description": "A bare-bones Space Station 13: 4-6 player round-based traitor game on rlkit. Server-authoritative WebSocket server + thin canvas client.",
+  "scripts": {
+    "dev": "vite",
+    "server": "tsx server/index.ts",
+    "proof": "tsx server/atmos-proof.ts",
+    "proof:breathing": "tsx server/breathing-proof.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^7.0.0",
+    "ws": "^8.18.0"
+  }
+}
