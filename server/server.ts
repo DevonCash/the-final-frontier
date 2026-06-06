@@ -52,7 +52,7 @@ function nextFreeFloor(world: World, levelId: string, tiles: Uint16Array, floorI
     }
     if (!occupied) return c;
   }
-  return 0;
+  throw new Error('nextFreeFloor: no unoccupied floor cell left to spawn a crew member');
 }
 
 /** Wrap the station world in a GameServer: crew-per-join, O₂ HUD extra, fog mode. */
@@ -132,6 +132,7 @@ export function startStationServer(opts: {
   const { game, viewport } = createStationServer({ seed: opts.seed, fog: opts.fog });
   const sockets = new Map<WebSocket, EntityId>();
   const lastSent = new Map<WebSocket, string>();
+  const needsFrame = new Set<WebSocket>(); // fresh sockets still owed their first frame
   const originOk = opts.allowedOrigin ?? localhostOnly;
 
   const wss = new WebSocketServer({
@@ -142,6 +143,7 @@ export function startStationServer(opts: {
   wss.on('connection', (ws) => {
     const id = game.join();
     sockets.set(ws, id);
+    needsFrame.add(ws);
     ws.send(JSON.stringify({ type: 'welcome', playerId: id, viewport }));
 
     ws.on('message', (data) => {
@@ -159,6 +161,7 @@ export function startStationServer(opts: {
     ws.on('close', () => {
       sockets.delete(ws);
       lastSent.delete(ws);
+      needsFrame.delete(ws);
       game.leave(id);
     });
   });
@@ -177,8 +180,15 @@ export function startStationServer(opts: {
       acc -= ticks * MS_PER_TICK;
       game.tick(ticks);
     }
+    // Frames can only differ if the world advanced (ticks>0) — including passive
+    // changes like O₂ drain that don't go through an action — or if a freshly
+    // joined socket still owes its first frame. A loop fire with no elapsed ticks
+    // can't change any existing frame, so skip the build+diff entirely.
+    if (ticks === 0 && needsFrame.size === 0) return;
     for (const [ws, id] of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
+      if (ticks === 0 && !needsFrame.has(ws)) continue;
+      needsFrame.delete(ws);
       const payload = JSON.stringify({ type: 'view', ...game.viewFor(id, viewport) });
       if (payload === lastSent.get(ws)) continue; // skip an unchanged frame
       lastSent.set(ws, payload);

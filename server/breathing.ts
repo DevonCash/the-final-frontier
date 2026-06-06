@@ -14,6 +14,7 @@
  * mixin hook that may mutate, sharing `tickActor`'s mutation context, so it calls
  * `changeResource` directly rather than going through the effect pipeline.
  */
+import { z } from 'zod';
 import {
   cellOf,
   get,
@@ -26,8 +27,16 @@ import {
   type Mixin,
   type MixinRegistry,
   type ResourceDefRegistry,
+  type ComponentRegistry,
 } from '../../rlkit/src/index';
 import { seconds, type Config } from './config';
+
+/** Schema for the breathing state component so save/load (`parseComponent`) validates it (Epic H rejoin). */
+const BreathingSchema = z.object({
+  type: z.literal('breathing'),
+  last: z.number(),
+  tankUntil: z.number(),
+});
 
 /** Per-actor breathing state: last-ticked world clock (for dt) + tank expiry. */
 export interface BreathingState {
@@ -59,6 +68,12 @@ function pressureAt(world: World, pos: Position): number | undefined {
  * `loadWorld` — `override` keeps it idempotent, re-attaching the mixin closure.
  */
 export function registerBreathing(world: World, config: Config): void {
+  // Register the breathing state component so a loaded save validates it.
+  (world.services.registries.components as ComponentRegistry).override('breathing', {
+    type: 'breathing',
+    schema: BreathingSchema,
+  });
+
   // Oxygen pool, capped by the `max-oxygen` stat. Depletion is handled in the
   // hook (→ HP damage), so no threshold here; HP's core `at:0 → died` does the rest.
   (world.services.registries.resources as ResourceDefRegistry).override('oxygen', {
@@ -87,13 +102,20 @@ export function registerBreathing(world: World, config: Config): void {
       const breathing = breath.tankUntil > now || p >= config.atmos.breathThreshold;
       if (breathing) {
         events.push(...changeResource(w, self.id, 'oxygen', config.oxygen.regenPerSecond * dt, 'breathe'));
-      } else {
-        events.push(...changeResource(w, self.id, 'oxygen', -config.oxygen.drainPerSecond * dt, 'vacuum'));
+        return events;
       }
-      // Out of air → suffocate. `changeResource` already mutated the pool above,
-      // so `current` is this tick's value; HP hitting 0 fires the core `died`.
-      if (res.pools.oxygen.current <= 0) {
-        events.push(...changeResource(w, self.id, 'hp', -config.oxygen.suffocationDps * dt, 'suffocation'));
+
+      // Vacuum: drain oxygen, then suffocate for only the portion of this window
+      // spent at zero O₂ (no sub-tick over-damage on the tick O₂ runs out). `o2` is
+      // the reserve before draining; `drain<=0` means it never empties (Infinity).
+      const o2 = res.pools.oxygen.current;
+      const drain = config.oxygen.drainPerSecond;
+      events.push(...changeResource(w, self.id, 'oxygen', -drain * dt, 'vacuum'));
+      const timeToEmpty = drain > 0 ? o2 / drain : Infinity;
+      const suffocatingDt = dt - Math.min(dt, timeToEmpty);
+      if (suffocatingDt > 0) {
+        // HP hitting 0 fires the core `died` threshold → death reactor unschedules.
+        events.push(...changeResource(w, self.id, 'hp', -config.oxygen.suffocationDps * suffocatingDt, 'suffocation'));
       }
       return events;
     },

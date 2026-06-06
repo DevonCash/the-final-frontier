@@ -12,7 +12,10 @@ const TILE = 16;
 const renderer = new CanvasRenderer(ctx, { tileSize: TILE, font: `${TILE}px monospace` });
 const statusEl = document.getElementById('status')!;
 
-const WS_URL = `ws://${location.hostname}:8787`;
+// Server WS port — must match the server's PORT env (default 8787). Override for a
+// non-default server with ?port=NNNN on the page URL.
+const SERVER_PORT = Number(new URLSearchParams(location.search).get('port')) || 8787;
+const WS_URL = `ws://${location.hostname}:${SERVER_PORT}`;
 let socket: WebSocket | undefined;
 
 interface ViewMsg {
@@ -33,7 +36,12 @@ function connect(): void {
     setTimeout(connect, 1000);
   };
   ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data as string) as ViewMsg;
+    let msg: ViewMsg;
+    try {
+      msg = JSON.parse(ev.data as string) as ViewMsg;
+    } catch {
+      return; // ignore a malformed frame rather than throwing in the handler
+    }
     if (msg.type === 'welcome' && msg.viewport) {
       canvas.width = msg.viewport.width * TILE;
       canvas.height = msg.viewport.height * TILE;
