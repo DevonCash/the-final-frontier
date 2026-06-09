@@ -32,6 +32,8 @@ npm test             # typecheck + every headless *-proof.ts (run before committ
 
 Individual proofs: `npm run proof` (atmos), `proof:breathing`, `proof:net`, `proof:station`, `proof:interaction`, `proof:items`.
 
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) mirrors this: it checks out `rlkit` as a sibling, installs both, and runs `npm test`. It needs rlkit pushed to a remote — see the header comment in the workflow to set the engine repo (and a token if rlkit is private).
+
 ## Workflow
 
 Two threads, one contract: the **game designer** (this repo) specs mechanics and files capability requirements; the **engine** (rlkit) designs and implements them. Gaps are negotiated in `design/engine-requirements.md`, never patched around inside engine files.
