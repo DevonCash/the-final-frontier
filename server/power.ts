@@ -174,7 +174,12 @@ function ensureGenerator(world: World, cell: Cell, config: Config): EntityId {
   const cap = config.power.fuelCapacity;
   const e = createEntity(GEN_ID, [
     { type: 'position', x, y, levelId: LEVEL_ID },
-    { type: 'renderable', glyph: config.power.glyph, fg: config.power.fg, layer: 4 },
+    {
+      type: 'renderable',
+      glyph: config.render.generator.glyph,
+      fg: config.render.generator.fg,
+      layer: config.render.layers.openable,
+    },
     { type: 'info', name: 'generator' },
     { type: 'generator', on: config.power.startsOn, running: false },
     { type: 'stats', base: { 'max-fuel': cap } },

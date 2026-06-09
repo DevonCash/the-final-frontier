@@ -90,6 +90,23 @@ async function main(): Promise<void> {
   b.ws.close();
   server.close();
 
+  // The hidden-fog transport path (FOG=hidden) is otherwise untested. Full
+  // FOV-occlusion behavior is Epic I (perception) and needs controlled movement;
+  // here we just prove the hidden path stands up end-to-end and delivers per-player
+  // frames in which each crew sees itself — i.e. `fog:'hidden'` doesn't break the wire.
+  console.log('the hidden-fog server delivers per-player frames (smoke)');
+  const hidden = startStationServer({ port: PORT + 1, fog: 'hidden' });
+  const ha = await connect(PORT + 1);
+  await waitFor(() => ha.playerId !== undefined);
+  const hb = await connect(PORT + 1);
+  await waitFor(() => hb.playerId !== undefined);
+  await waitFor(() => countGlyph(ha.lastFrame, '@') >= 1 && countGlyph(hb.lastFrame, '@') >= 1);
+  check('hidden: A receives a frame and sees a crew', countGlyph(ha.lastFrame, '@') >= 1, `@=${countGlyph(ha.lastFrame, '@')}`);
+  check('hidden: B receives its own frame', hb.lastFrame !== undefined);
+  ha.ws.close();
+  hb.ws.close();
+  hidden.close();
+
   console.log(failures === 0 ? '\nALL NET PROOFS PASS' : `\n${failures} CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 }

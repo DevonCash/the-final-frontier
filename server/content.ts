@@ -10,7 +10,7 @@
  * hold) — see `openable.ts` for `placeDoor`/`placeLocker` and the `on:bump` rule.
  */
 import { createEntity, pointOf, type World, type EntityId } from '../../rlkit/src/index';
-import type { Config } from './config';
+import { config, type Config } from './config';
 
 /** Game-registered tile flags (on top of core walkable/transparent). */
 export const FLAGS = { airtight: 'airtight', wire: 'wire' } as const;
@@ -35,16 +35,17 @@ export function registerContent(world: World): void {
   flags.register(FLAGS.wire);
 
   const t = world.services.tiles;
-  t.register({ id: TILES.hull, walkable: false, transparent: false, glyph: '#', fg: '#8af', flags: [FLAGS.airtight] });
-  t.register({ id: TILES.space, walkable: true, transparent: true, glyph: ' ', fg: '#000' });
-  t.register({ id: TILES.window, walkable: false, transparent: true, glyph: '%', fg: '#9cf', flags: [FLAGS.airtight] });
+  const tile = config.render.tiles;
+  t.register({ id: TILES.hull, walkable: false, transparent: false, glyph: tile.hull.glyph, fg: tile.hull.fg, flags: [FLAGS.airtight] });
+  t.register({ id: TILES.space, walkable: true, transparent: true, glyph: tile.space.glyph, fg: tile.space.fg });
+  t.register({ id: TILES.window, walkable: false, transparent: true, glyph: tile.window.glyph, fg: tile.window.fg, flags: [FLAGS.airtight] });
 }
 
 /**
  * Spawn a crew actor at a cell: a breathing, oxygen-bearing entity that paces the
  * timeline and suffocates in vacuum (the `breather` mixin, registered separately
- * by `registerBreathing`). `max-hp` is authored content; `max-oxygen` reads from
- * config. The `breathing` state component seeds `last` to the current world clock
+ * by `registerBreathing`). HP, oxygen, glyph, and layer all read from `config`
+ * (config-vs-logic pillar). The `breathing` state component seeds `last` to the current world clock
  * so the mixin's first dt is small. Mirrors `placeDoor`'s index/place pattern plus
  * `addActor`, matching the netcoop monster spawn.
  */
@@ -62,11 +63,11 @@ export function spawnCrew(
     opts.id,
     [
       { type: 'position', x, y, levelId },
-      { type: 'renderable', glyph: '@', fg: '#fff', layer: 5 },
+      { type: 'renderable', glyph: config.render.crew.glyph, fg: config.render.crew.fg, layer: config.render.layers.actor },
       { type: 'info', name: opts.name ?? 'crew' },
       { type: 'allegiance', faction: 'crew' },
-      { type: 'stats', base: { 'max-hp': 100, 'max-oxygen': config.oxygen.max } },
-      { type: 'resources', pools: { hp: { current: 100 }, oxygen: { current: config.oxygen.max } } },
+      { type: 'stats', base: { 'max-hp': config.stats.maxHp, 'max-oxygen': config.oxygen.max } },
+      { type: 'resources', pools: { hp: { current: config.stats.maxHp }, oxygen: { current: config.oxygen.max } } },
       { type: 'breathing', last: now, tankUntil: 0 },
       { type: 'inventory', items: [] }, // carries ID + tools (full inventory is Epic F)
     ],

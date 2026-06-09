@@ -55,9 +55,37 @@ export interface PowerConfig {
   readonly burnCadence: number;
   /** Whether the generator is switched on at round start. */
   readonly startsOn: boolean;
-  /** Generator entity glyph + colour (single colour — no gradients). */
+}
+
+/** A glyph + foreground color (the config-vs-logic pillar keeps both here). */
+export interface Glyph {
   readonly glyph: string;
   readonly fg: string;
+}
+
+/** An openable's color plus its open/closed glyph pair. */
+export interface OpenableGlyph {
+  readonly fg: string;
+  readonly open: string;
+  readonly closed: string;
+}
+
+export interface RenderConfig {
+  /** Render layer (draw order) per entity class; higher draws on top. */
+  readonly layers: { readonly item: number; readonly openable: number; readonly actor: number };
+  readonly crew: Glyph;
+  /** Tile palette glyph+color (registered into the engine in content.ts). */
+  readonly tiles: { readonly hull: Glyph; readonly space: Glyph; readonly window: Glyph };
+  /** Carried-item glyphs; `default.fg` is the fallback color for an unspecified item. */
+  readonly items: {
+    readonly default: { readonly fg: string };
+    readonly id: Glyph;
+    readonly crowbar: Glyph;
+    readonly emag: Glyph;
+  };
+  readonly openable: { readonly door: OpenableGlyph; readonly locker: OpenableGlyph };
+  /** The generator (a powered station fixture, drawn at the openable layer). */
+  readonly generator: Glyph;
 }
 
 export interface Config {
@@ -66,6 +94,14 @@ export interface Config {
   readonly oxygen: OxygenConfig;
   readonly round: RoundConfig;
   readonly power: PowerConfig;
+  /** Actor stats (authored content; oxygen max lives under `oxygen`). */
+  readonly stats: { readonly maxHp: number };
+  /** Server loop tunables. */
+  readonly server: { readonly maxTickCatchup: number };
+  /** Render glyphs, colors, and draw layers (config-vs-logic pillar). */
+  readonly render: RenderConfig;
+  /** Bump-interaction priority for the openable on:bump rule (above the absent attack rule). */
+  readonly openableBumpPriority: number;
   /** Melee damage by weapon class (game-design §4.1). */
   readonly weaponDamage: Readonly<Record<string, number>>;
   /** Access tags a door/locker may require; an ID grants a subset. */
@@ -107,9 +143,30 @@ export const config: Config = {
     burnPerSecond: 1,
     burnCadence: TICKS_PER_SECOND, // drain once per second
     startsOn: true,
-    glyph: 'G',
-    fg: '#fd5',
   },
+  stats: { maxHp: 100 },
+  server: { maxTickCatchup: 8 },
+  render: {
+    layers: { item: 3, openable: 4, actor: 5 },
+    crew: { glyph: '@', fg: '#fff' },
+    tiles: {
+      hull: { glyph: '#', fg: '#8af' },
+      space: { glyph: ' ', fg: '#000' },
+      window: { glyph: '%', fg: '#9cf' },
+    },
+    items: {
+      default: { fg: '#ddd' },
+      id: { glyph: 'i', fg: '#fc6' },
+      crowbar: { glyph: '/', fg: '#c44' },
+      emag: { glyph: '!', fg: '#f4f' },
+    },
+    openable: {
+      door: { fg: '#b85', open: "'", closed: '+' },
+      locker: { fg: '#9b7', open: 'l', closed: 'L' },
+    },
+    generator: { glyph: 'G', fg: '#fd5' },
+  },
+  openableBumpPriority: 5,
   weaponDamage: { fist: 5, tool: 12, knife: 25 },
   access: {
     doors: { bridge: 'bridge', engineering: 'engineering', maintenance: 'maintenance' },
