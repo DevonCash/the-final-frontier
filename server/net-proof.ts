@@ -71,6 +71,9 @@ async function main(): Promise<void> {
 
   await waitFor(() => countGlyph(a.lastFrame, '@') >= 2);
   check('A sees both crew (shared fog)', countGlyph(a.lastFrame, '@') >= 2, `@ count=${countGlyph(a.lastFrame, '@')}`);
+  // A's 2-crew frame and B's first frame ride independent sockets, so B's may
+  // still be in flight when A's arrives — await it rather than assume ordering.
+  await waitFor(() => b.lastFrame !== undefined);
   check('B receives its own frame', b.lastFrame !== undefined);
 
   console.log('a movement intent advances the world');
