@@ -13,6 +13,7 @@
  */
 import { registerStepper, neighbors4, type World } from '../../rlkit/src/index';
 import { FLAGS, TILES } from './content';
+import { isPowered } from './power';
 import type { Config } from './config';
 
 /**
@@ -60,4 +61,34 @@ function tileIsSpace(w: World, level: { id: string }, cell: number, spaceIdx: nu
   const lvl = w.state.levels.get(level.id)!;
   const tiles = lvl.layers.get('tiles') as Uint16Array;
   return tiles[cell] === spaceIdx;
+}
+
+/**
+ * Register the powered-vent stepper: each atmos sweep, every vent cell that reads
+ * `powered` (wire-connected to the running generator) pushes its own cell toward
+ * `nominalPressure` by `ventRate` kPa/s (the diffusion stepper then spreads it into
+ * the room). An UNPOWERED vent does nothing — cutting the wire stops repressurization
+ * (Epic E proof). Shares the atmos cadence so vents and diffusion stay in lockstep.
+ *
+ * Idempotent (override on re-register), like `registerAtmos`. Call with the station's
+ * vent cells; an empty list registers an inert stepper (fixtures without vents).
+ */
+export function registerVents(world: World, config: Config, ventCells: readonly number[]): void {
+  const cells = [...ventCells];
+  const perSweep = config.atmos.ventRate * (config.atmos.cadence / config.ticksPerSecond);
+  const nominal = config.atmos.nominalPressure;
+
+  registerStepper(world, {
+    id: 'vents',
+    layer: 'pressure',
+    cadence: config.atmos.cadence,
+    step: (w, _level, pressure) => {
+      for (const cell of cells) {
+        if (!isPowered(w, cell)) continue;
+        const next = pressure[cell]! + perSweep;
+        pressure[cell] = next > nominal ? nominal : next;
+      }
+      return [];
+    },
+  });
 }

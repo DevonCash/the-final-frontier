@@ -46,6 +46,17 @@ export interface RoundConfig {
   readonly shuttleAt: number;
 }
 
+export interface PowerConfig {
+  /** Generator fuel tank size (units); also the `max-fuel` stat base. */
+  readonly fuelCapacity: number;
+  /** Fuel units burned per second while the generator runs. */
+  readonly burnPerSecond: number;
+  /** World-ticks between fuel-drain steps (the generator's world-tick clock). */
+  readonly burnCadence: number;
+  /** Whether the generator is switched on at round start. */
+  readonly startsOn: boolean;
+}
+
 /** A glyph + foreground color (the config-vs-logic pillar keeps both here). */
 export interface Glyph {
   readonly glyph: string;
@@ -73,6 +84,8 @@ export interface RenderConfig {
     readonly emag: Glyph;
   };
   readonly openable: { readonly door: OpenableGlyph; readonly locker: OpenableGlyph };
+  /** The generator (a powered station fixture, drawn at the openable layer). */
+  readonly generator: Glyph;
 }
 
 export interface Config {
@@ -80,6 +93,7 @@ export interface Config {
   readonly atmos: AtmosConfig;
   readonly oxygen: OxygenConfig;
   readonly round: RoundConfig;
+  readonly power: PowerConfig;
   /** Actor stats (authored content; oxygen max lives under `oxygen`). */
   readonly stats: { readonly maxHp: number };
   /** Server loop tunables. */
@@ -124,6 +138,12 @@ export const config: Config = {
     roundLength: 600,
     shuttleAt: 480,
   },
+  power: {
+    fuelCapacity: 600, // ~roundLength seconds at burnPerSecond = 1
+    burnPerSecond: 1,
+    burnCadence: TICKS_PER_SECOND, // drain once per second
+    startsOn: true,
+  },
   stats: { maxHp: 100 },
   server: { maxTickCatchup: 8 },
   render: {
@@ -144,6 +164,7 @@ export const config: Config = {
       door: { fg: '#b85', open: "'", closed: '+' },
       locker: { fg: '#9b7', open: 'l', closed: 'L' },
     },
+    generator: { glyph: 'G', fg: '#fd5' },
   },
   openableBumpPriority: 5,
   weaponDamage: { fist: 5, tool: 12, knife: 25 },

@@ -12,12 +12,20 @@
  */
 import { createWorld, defaultConfig, type World } from '../../rlkit/src/index';
 import { registerContent } from './content';
-import { buildStation, buildFixtureStation, type Station, type FixtureStation } from './station';
-import { registerAtmos } from './atmos';
+import {
+  buildStation,
+  buildFixtureStation,
+  buildPowerFixture,
+  type Station,
+  type FixtureStation,
+  type PowerFixtureStation,
+} from './station';
+import { registerAtmos, registerVents } from './atmos';
 import { registerBreathing } from './breathing';
 import { registerItems } from './items';
 import { registerOpenable } from './openable';
 import { registerUseOn } from './useon';
+import { registerPower } from './power';
 import { config, type Config } from './config';
 
 export interface GameWorld {
@@ -28,6 +36,11 @@ export interface GameWorld {
 export interface FixtureWorld {
   world: World;
   station: FixtureStation;
+}
+
+export interface PowerFixtureWorld {
+  world: World;
+  station: PowerFixtureStation;
 }
 
 /** Shared assembly: engine world → content → a station → atmosphere → breathing. */
@@ -55,10 +68,21 @@ function assemble<S>(seed: number, build: (world: World, config: Config) => S): 
 
 /** The full production station — what the server runs. */
 export function buildGameWorld(seed = 1): GameWorld {
-  return assemble(seed, buildStation);
+  const { world, station } = assemble(seed, buildStation);
+  registerPower(world, config, station.mark.generator);
+  registerVents(world, config, station.mark.vents);
+  return { world, station };
 }
 
 /** The minimal two-room fixture — what the atmos/breathing proofs drive. */
 export function buildFixtureWorld(seed = 1): FixtureWorld {
   return assemble(seed, buildFixtureStation);
+}
+
+/** The power fixture — what the Epic-E power proof drives. */
+export function buildPowerFixtureWorld(seed = 1): PowerFixtureWorld {
+  const { world, station } = assemble(seed, buildPowerFixture);
+  registerPower(world, config, station.mark.generator);
+  registerVents(world, config, [station.mark.vent]);
+  return { world, station };
 }
