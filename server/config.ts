@@ -72,7 +72,7 @@ export interface OpenableGlyph {
 
 export interface RenderConfig {
   /** Render layer (draw order) per entity class; higher draws on top. */
-  readonly layers: { readonly item: number; readonly openable: number; readonly actor: number };
+  readonly layers: { readonly corpse: number; readonly item: number; readonly openable: number; readonly actor: number };
   readonly crew: Glyph;
   /** Tile palette glyph+color (registered into the engine in content.ts). */
   readonly tiles: { readonly hull: Glyph; readonly space: Glyph; readonly window: Glyph };
@@ -82,10 +82,19 @@ export interface RenderConfig {
     readonly id: Glyph;
     readonly crowbar: Glyph;
     readonly emag: Glyph;
+    readonly welder: Glyph;
+    readonly wrench: Glyph;
+    readonly wirecutters: Glyph;
+    readonly cable: Glyph;
+    readonly knife: Glyph;
+    readonly o2tank: Glyph;
+    readonly disk: Glyph;
   };
   readonly openable: { readonly door: OpenableGlyph; readonly locker: OpenableGlyph };
   /** The generator (a powered station fixture, drawn at the openable layer). */
   readonly generator: Glyph;
+  /** The corpse an actor leaves on death (Epic F loot, drawn below the living). */
+  readonly corpse: Glyph;
 }
 
 export interface Config {
@@ -112,6 +121,8 @@ export interface Config {
   readonly windowHits: number;
   readonly wallCutUses: number;
   readonly repairUses: number;
+  /** Relays a single cable item can lay before it's spent (game-design §4.1, cable ×10). */
+  readonly cableLength: number;
   /** Local-say hearing radius in cells (distance, not line-of-sight). */
   readonly hearingRadius: number;
   readonly emagCharges: number;
@@ -147,7 +158,7 @@ export const config: Config = {
   stats: { maxHp: 100 },
   server: { maxTickCatchup: 8 },
   render: {
-    layers: { item: 3, openable: 4, actor: 5 },
+    layers: { corpse: 2, item: 3, openable: 4, actor: 5 },
     crew: { glyph: '@', fg: '#fff' },
     tiles: {
       hull: { glyph: '#', fg: '#8af' },
@@ -159,12 +170,20 @@ export const config: Config = {
       id: { glyph: 'i', fg: '#fc6' },
       crowbar: { glyph: '/', fg: '#c44' },
       emag: { glyph: '!', fg: '#f4f' },
+      welder: { glyph: 'w', fg: '#fa3' },
+      wrench: { glyph: 'r', fg: '#bbb' },
+      wirecutters: { glyph: 'x', fg: '#fc4' },
+      cable: { glyph: '-', fg: '#e22' },
+      knife: { glyph: 'k', fg: '#dde' },
+      o2tank: { glyph: 'O', fg: '#6cf' },
+      disk: { glyph: '*', fg: '#ff4' }, // the intel disk (round objective, Epic H)
     },
     openable: {
       door: { fg: '#b85', open: "'", closed: '+' },
       locker: { fg: '#9b7', open: 'l', closed: 'L' },
     },
     generator: { glyph: 'G', fg: '#fd5' },
+    corpse: { glyph: '%', fg: '#a55' },
   },
   openableBumpPriority: 5,
   weaponDamage: { fist: 5, tool: 12, knife: 25 },
@@ -175,6 +194,7 @@ export const config: Config = {
   windowHits: 3,
   wallCutUses: 5,
   repairUses: 3,
+  cableLength: 10,
   hearingRadius: 7,
   emagCharges: 3,
 };

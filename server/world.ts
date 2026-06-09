@@ -25,6 +25,7 @@ import { registerBreathing } from './breathing';
 import { registerItems } from './items';
 import { registerOpenable } from './openable';
 import { registerUseOn } from './useon';
+import { registerCorpses } from './corpse';
 import { registerPower } from './power';
 import { config, type Config } from './config';
 
@@ -55,9 +56,10 @@ function assemble<S>(seed: number, build: (world: World, config: Config) => S): 
   };
   const world = createWorld({ config: engineConfig, rng: seed });
 
-  registerItems(world); // component schemas (tags/tool) before any entity carries them
+  registerItems(world); // component schemas (tags/tool) + activate verb (O₂ tank)
   registerOpenable(world); // openable component + on:bump rule + handler
-  registerUseOn(world); // useOn handler + tool rules (crowbar, emag)
+  registerCorpses(world); // corpse component + died→corpse reactor + loot bump rule
+  registerUseOn(world); // useOn handler + tool rules (crowbar/emag + welder/wrench/cutters/cable)
   registerContent(world);
   const station = build(world, config);
   registerAtmos(world, config);
