@@ -179,8 +179,8 @@ export function startStationServer(opts: {
     });
   });
 
-  // Fixed logical timestep: 25 ticks/s (config.ticksPerSecond). Catch up at most 8
-  // ticks per loop so a stalled tab can't make the sim sprint.
+  // Fixed logical timestep: 25 ticks/s (config.ticksPerSecond). Catch up at most
+  // config.server.maxTickCatchup ticks per loop so a stalled tab can't make the sim sprint.
   const MS_PER_TICK = 1000 / config.ticksPerSecond;
   let last = Date.now();
   let acc = 0;
@@ -188,7 +188,7 @@ export function startStationServer(opts: {
     const now = Date.now();
     acc += now - last;
     last = now;
-    const ticks = Math.min(8, Math.floor(acc / MS_PER_TICK));
+    const ticks = Math.min(config.server.maxTickCatchup, Math.floor(acc / MS_PER_TICK));
     if (ticks > 0) {
       acc -= ticks * MS_PER_TICK;
       game.tick(ticks);

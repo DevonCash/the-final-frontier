@@ -11,7 +11,9 @@
     "proof:net": "tsx server/net-proof.ts",
     "proof:station": "tsx server/station-proof.ts",
     "proof:interaction": "tsx server/interaction-proof.ts",
-    "typecheck": "tsc --noEmit"
+    "proof:items": "tsx server/items-proof.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && npm run proof && npm run proof:breathing && npm run proof:net && npm run proof:station && npm run proof:interaction && npm run proof:items"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -1,0 +1,54 @@
+name: CI
+
+# Typecheck + every headless proof on push / PR.
+#
+# The engine (rlkit) is consumed FROM SOURCE as a sibling checkout — the same
+# layout as a local dev machine (`../rlkit` next to this repo), which is what the
+# relative imports (`../../rlkit/src/index`) and the tsconfig/vite `rlkit` alias
+# resolve against. So CI lays the two repos out side by side and runs `npm test`.
+#
+# ▶ BEFORE THIS GOES GREEN: rlkit must be pushed to a remote. Set the engine repo
+#   below. Defaults to `<this-owner>/rlkit`; change `repository:` if it lives
+#   elsewhere, add `ref:` if its default branch isn't the checkout default, and —
+#   if rlkit is PRIVATE — add `token: ${{ secrets.RLKIT_TOKEN }}` (a PAT/deploy
+#   key with read access; the default GITHUB_TOKEN can't read other repos).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the game
+        uses: actions/checkout@v5
+        with:
+          path: the-final-frontier
+
+      - name: Checkout the engine (rlkit) as a sibling
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/rlkit
+          path: rlkit
+          # ref: main                       # uncomment if rlkit's default branch differs
+          # token: ${{ secrets.RLKIT_TOKEN }} # uncomment if rlkit is private
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # Source consumption: importing rlkit's `src/` pulls in its runtime deps
+      # (rot-js, pure-rand, …) from rlkit's own node_modules, so install there too.
+      - name: Install engine deps
+        working-directory: rlkit
+        run: npm install
+
+      - name: Install game deps
+        working-directory: the-final-frontier
+        run: npm ci
+
+      - name: Typecheck + proofs
+        working-directory: the-final-frontier
+        run: npm test
