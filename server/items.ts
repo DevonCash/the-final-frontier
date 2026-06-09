@@ -18,6 +18,7 @@ import {
   type Component,
   type ComponentRegistry,
 } from '../../rlkit/src/index';
+import { config } from './config';
 
 export const ToolSchema = z.object({
   type: z.literal('tool'),
@@ -59,7 +60,7 @@ interface ItemSpec {
 export function spawnItem(world: World, spec: ItemSpec): EntityId {
   const components: Component[] = [
     { type: 'item', name: spec.name, stackable: false, qty: 1 },
-    { type: 'renderable', glyph: spec.glyph, fg: spec.fg ?? '#ddd', layer: 3 },
+    { type: 'renderable', glyph: spec.glyph, fg: spec.fg ?? config.render.items.default.fg, layer: config.render.layers.item },
     { type: 'info', name: spec.name },
   ];
   if (spec.tags) components.push({ type: 'tags', tags: spec.tags });
@@ -73,13 +74,16 @@ export function spawnItem(world: World, spec: ItemSpec): EntityId {
 // --- convenience factories --------------------------------------------------
 
 export function spawnIdCard(world: World, id: string, access: string[], name = 'ID card'): EntityId {
-  return spawnItem(world, { id, name, glyph: 'i', fg: '#fc6', tags: access.map((a) => `access:${a}`) });
+  const g = config.render.items.id;
+  return spawnItem(world, { id, name, glyph: g.glyph, fg: g.fg, tags: access.map((a) => `access:${a}`) });
 }
 export function spawnCrowbar(world: World, id: string): EntityId {
-  return spawnItem(world, { id, name: 'crowbar', glyph: '/', fg: '#c44', tool: { kind: 'crowbar' } });
+  const g = config.render.items.crowbar;
+  return spawnItem(world, { id, name: 'crowbar', glyph: g.glyph, fg: g.fg, tool: { kind: 'crowbar' } });
 }
 export function spawnEmag(world: World, id: string, charges: number): EntityId {
-  return spawnItem(world, { id, name: 'cryptographic sequencer', glyph: '!', fg: '#f4f', tool: { kind: 'emag', charges } });
+  const g = config.render.items.emag;
+  return spawnItem(world, { id, name: 'cryptographic sequencer', glyph: g.glyph, fg: g.fg, tool: { kind: 'emag', charges } });
 }
 
 // --- inventory / access reads (hand-rolled; full inventory is Epic F) --------

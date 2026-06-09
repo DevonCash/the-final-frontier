@@ -37,6 +37,7 @@ import {
 } from '../../rlkit/src/index';
 import { FLAGS } from './content';
 import { hasAccess } from './items';
+import { config } from './config';
 
 export const OpenableSchema = z.object({
   type: z.literal('openable'),
@@ -49,10 +50,9 @@ export const OpenableSchema = z.object({
 });
 export type Openable = z.infer<typeof OpenableSchema> & { [key: string]: unknown };
 
-const GLYPH = {
-  door: { open: "'", closed: '+' },
-  locker: { open: 'l', closed: 'L' },
-} as const;
+/** Open/closed glyph pair per openable kind (config-vs-logic pillar). */
+const glyphFor = (kind: 'door' | 'locker', open: boolean): string =>
+  config.render.openable[kind][open ? 'open' : 'closed'];
 
 function setGlyph(e: Entity, glyph: string): void {
   const r = e.components.get('renderable') as { type: 'renderable'; glyph: string } | undefined;
@@ -70,7 +70,7 @@ export function setOpen(world: World, id: EntityId, open: boolean): GameEvent[] 
   if (!e || !o || o.open === open) return [];
   o.open = open;
   const pos = e.components.get('position') as { x: number; y: number; levelId: string } | undefined;
-  setGlyph(e, GLYPH[o.kind][open ? 'open' : 'closed']);
+  setGlyph(e, glyphFor(o.kind, open));
 
   if (o.kind === 'door' && pos) {
     const tf = e.components.get('tileFlags') as { type: 'tileFlags'; flags: string[] } | undefined;
@@ -137,7 +137,7 @@ function placeOpenable(world: World, levelId: string, cell: number, kind: 'door'
   const { x, y } = pointOf(cell, level.width);
   const components: Component[] = [
     { type: 'position', x, y, levelId },
-    { type: 'renderable', glyph: GLYPH[kind].closed, fg: kind === 'door' ? '#b85' : '#9b7', layer: 4 },
+    { type: 'renderable', glyph: glyphFor(kind, false), fg: config.render.openable[kind].fg, layer: config.render.layers.openable },
     { type: 'info', name: kind === 'door' ? 'airlock' : 'locker' },
     {
       type: 'openable',
@@ -194,7 +194,7 @@ export function registerOpenable(world: World): void {
 
   // Bump into an openable → try to open it (priority above the absent attack rule).
   const rule: BumpInteraction = {
-    priority: 5,
+    priority: config.openableBumpPriority,
     claim(ctx) {
       const target = ctx.world.state.entities.get(ctx.target);
       if (!target?.components.has('openable')) return undefined;
