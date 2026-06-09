@@ -17,15 +17,30 @@ import {
   type Effect,
   type Component,
   type ComponentRegistry,
+  type ActionHandler,
+  type ActionContext,
+  type Registry,
 } from '../../rlkit/src/index';
 import { config } from './config';
+import { activateTank } from './breathing';
 
 export const ToolSchema = z.object({
   type: z.literal('tool'),
-  kind: z.string(), // 'crowbar' | 'emag' | … (keys useOn dispatch)
-  charges: z.number().int().optional(), // emag: limited uses
+  kind: z.string(), // 'crowbar' | 'emag' | 'welder' | … (keys useOn / activate dispatch)
+  charges: z.number().int().optional(), // emag / cable: limited uses
 });
 export type Tool = z.infer<typeof ToolSchema> & { [key: string]: unknown };
+
+// The engine's inventory core registers the `pickup`/`drop` handlers and the
+// `inventory`/`item` components; we declaration-merge their action shapes (plus the
+// game's `activate`) so `perform` calls typecheck across the package boundary (R5).
+declare module '../../rlkit/src/core/action' {
+  interface ActionMap {
+    pickup: { type: 'pickup'; actor: EntityId; item: EntityId };
+    drop: { type: 'drop'; actor: EntityId; item: EntityId };
+    activate: { type: 'activate'; actor: EntityId; item: EntityId };
+  }
+}
 
 const TaggedSchema = z.object({ type: z.literal('tags'), tags: z.array(z.string()) });
 
@@ -40,11 +55,55 @@ interface Tagged {
   [key: string]: unknown;
 }
 
-/** Register the item-related component schemas (tags + tool) for save validation. */
+// --- activate dispatch (self-used items, e.g. the O₂ tank) -------------------
+// A tiny sibling to `useOn`: no target, no adjacency — just "use the held item on
+// yourself". Keyed by tool kind so it stays a system, not a special-case.
+export type ActivateRule = (ctx: ActionContext, args: { itemId: EntityId }) => void;
+const ACTIVATE = new WeakMap<World, Map<string, ActivateRule>>();
+function activateRulesFor(world: World): Map<string, ActivateRule> {
+  let m = ACTIVATE.get(world);
+  if (!m) ACTIVATE.set(world, (m = new Map()));
+  return m;
+}
+export function registerActivateRule(world: World, kind: string, rule: ActivateRule): void {
+  activateRulesFor(world).set(kind, rule);
+}
+
+/** Register the item component schemas, the `activate` handler, and the O₂-tank rule. */
 export function registerItems(world: World): void {
   const reg = world.services.registries.components as ComponentRegistry;
   reg.override('tags', { type: 'tags', schema: TaggedSchema });
   reg.override('tool', { type: 'tool', schema: ToolSchema });
+
+  const rules = activateRulesFor(world);
+  const handler: ActionHandler = (ctx) => {
+    const a = ctx.action as { actor: EntityId; item?: EntityId };
+    if (!a.item || !carries(ctx.world, a.actor, a.item)) return void ctx.reject('activate: item not carried');
+    const tool = get<Tool>(ctx.world.state.entities.get(a.item)!, 'tool');
+    const rule = tool && rules.get(tool.kind);
+    if (!rule) return void ctx.reject('activate: nothing to activate');
+    rule(ctx, { itemId: a.item });
+  };
+  (world.services.registries.handlers as Registry<ActionHandler>).register('activate', handler);
+
+  // O₂ tank: activating a carried tank pauses the holder's suffocation for
+  // `tankDuration` (the EVA enabler, Epic A's `activateTank`). A free action.
+  registerActivateRule(world, 'o2tank', (ctx, { itemId }) => {
+    ctx.cost = 0;
+    ctx.push(activateTankEffect(ctx.action.actor, itemId));
+  });
+}
+
+/** An effect that activates an O₂ tank on its holder (pauses the oxygen drain). */
+function activateTankEffect(actorId: EntityId, tankId: EntityId): Effect {
+  return {
+    kind: 'tank:activate',
+    validate: (world) => carries(world, actorId, tankId),
+    apply: (world) => {
+      activateTank(world, actorId, config);
+      return [{ type: 'tank:activated', actor: actorId, item: tankId }];
+    },
+  };
 }
 
 interface ItemSpec {
@@ -84,6 +143,34 @@ export function spawnCrowbar(world: World, id: string): EntityId {
 export function spawnEmag(world: World, id: string, charges: number): EntityId {
   const g = config.render.items.emag;
   return spawnItem(world, { id, name: 'cryptographic sequencer', glyph: g.glyph, fg: g.fg, tool: { kind: 'emag', charges } });
+}
+export function spawnWelder(world: World, id: string): EntityId {
+  const g = config.render.items.welder;
+  return spawnItem(world, { id, name: 'welding tool', glyph: g.glyph, fg: g.fg, tool: { kind: 'welder' } });
+}
+export function spawnWrench(world: World, id: string): EntityId {
+  const g = config.render.items.wrench;
+  return spawnItem(world, { id, name: 'wrench', glyph: g.glyph, fg: g.fg, tool: { kind: 'wrench' } });
+}
+export function spawnWirecutters(world: World, id: string): EntityId {
+  const g = config.render.items.wirecutters;
+  return spawnItem(world, { id, name: 'wirecutters', glyph: g.glyph, fg: g.fg, tool: { kind: 'wirecutters' } });
+}
+export function spawnCable(world: World, id: string, charges = config.cableLength): EntityId {
+  const g = config.render.items.cable;
+  return spawnItem(world, { id, name: 'cable coil', glyph: g.glyph, fg: g.fg, tool: { kind: 'cable', charges } });
+}
+export function spawnKnife(world: World, id: string): EntityId {
+  const g = config.render.items.knife;
+  return spawnItem(world, { id, name: 'combat knife', glyph: g.glyph, fg: g.fg, tool: { kind: 'knife' } });
+}
+export function spawnO2Tank(world: World, id: string): EntityId {
+  const g = config.render.items.o2tank;
+  return spawnItem(world, { id, name: 'O₂ tank', glyph: g.glyph, fg: g.fg, tool: { kind: 'o2tank' } });
+}
+export function spawnIntelDisk(world: World, id: string): EntityId {
+  const g = config.render.items.disk;
+  return spawnItem(world, { id, name: 'intel disk', glyph: g.glyph, fg: g.fg, tags: ['objective:disk'] });
 }
 
 // --- inventory / access reads (hand-rolled; full inventory is Epic F) --------
