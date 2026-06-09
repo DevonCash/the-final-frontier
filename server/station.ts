@@ -104,26 +104,29 @@ function placeDoors(
 // Full station (production)
 // ===========================================================================
 
-// 48×20. Corridor spine: vertical cols 22–23 (rows 2–17) crossed by a horizontal
-// run (rows 9–10). Rooms hang off the spine; the bridge's north hull carries the
-// windows; the external airlock (E) is the EVA route through the south hull.
+// 48×20. Corridor spine: vertical cols 21–22 crossed by a horizontal run (rows
+// 9–10). Rooms hang off the spine; the bridge's north hull carries the windows; the
+// external airlock (E) is the EVA route through the south hull. Single-width wire
+// branches (`=`) thread from the spine into each room to reach its vent, plus the
+// generator and locker, so every powered consumer is a literal member of one wire
+// network (Epic E, `powered = sameNetwork(cell, genCell)`).
 const STATION_MAP: readonly string[] = [
   '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
   '~#########################%%%%%%%##############~',
   '~#...................#==#.........#...........#~',
   '~#...v...............#==#....v....#.....v.....#~',
-  '~#...................+==+.........#..s.s.s.s..#~',
-  '~#......G............#==#..C...L..#...........#~',
-  '~#...................#==#.........#..s.s......#~',
-  '~#...................#==#.........#...........#~',
+  '~#...================+==+=======..#..s.s=s.s..#~',
+  '~#......G............#==#..C...L..#.....=.....#~',
+  '~#...................#==#.........#..s.s=.....#~',
+  '~#...................#==#.........#.....=.....#~',
   '~#####################==################+######~',
   '~#============================================#~',
   '~#============================================#~',
   '~#########+###########==######+############A###~',
-  '~#...................#==#...............#.....#~',
-  '~#...................#==#...............#.....#~',
-  '~#...................#==#...............#.....#~',
-  '~#...v...............#==#.....v.........#..v..#~',
+  '~#........=..........#==#.....=.........#..=..#~',
+  '~#........=..........#==#.....=.........#..=..#~',
+  '~#........=..........#==#.....=.........#..=..#~',
+  '~#...v=====..........#==#.....v.........#..v..#~',
   '~#...................#==#...............#.....#~',
   '~#...................#==#...............#.....#~',
   '~#####################E########################~',
@@ -153,8 +156,9 @@ export function buildStation(world: World, config: Config): Station {
   const { doors, shuttle, external } = placeDoors(world, level, STATION_MAP);
 
   // Collect marks and the wire layer from the glyphs (one source of truth — the
-  // map). The power network (Epic E) reads `wire`; routing to the generator and
-  // consumers is refined there.
+  // map). The power network (Epic E) reads `wire`; every powered consumer's own cell
+  // is a wire member (`=` branches plus the cell under the generator/vent/locker/door
+  // glyphs), so `powered = sameNetwork(cell, genCell)` holds.
   const wire = ensureU8Layer(level, 'wire');
   const spawns: number[] = [];
   const vents: number[] = [];
@@ -164,14 +168,17 @@ export function buildStation(world: World, config: Config): Station {
   for (let y = 0; y < STATION_MAP.length; y++) {
     for (let x = 0; x < level.width; x++) {
       const cell = levelCell(level, x, y);
-      switch (STATION_MAP[y]![x]) {
+      const ch = STATION_MAP[y]![x]!;
+      switch (ch) {
         case 's': spawns.push(cell); break;
         case 'v': vents.push(cell); break;
         case 'C': captainSpawn = cell; break;
         case 'G': generator = cell; break;
         case 'L': locker = cell; break;
-        case '=': wire[cell] = 1; break;
       }
+      // Wire members: the spine/branches AND the consumer cells they feed (vents,
+      // locker, generator, doors) — so each consumer reads its own cell's network.
+      if (ch === '=' || ch === 'v' || ch === 'L' || ch === 'G' || DOOR_CHARS.has(ch)) wire[cell] = 1;
     }
   }
 
@@ -227,6 +234,64 @@ export function buildFixtureStation(world: World, config: Config): FixtureStatio
     door: levelCell(level, 8, 3),
     window: levelCell(level, 18, 3),
     spaceOutsideWindow: levelCell(level, 19, 3),
+  };
+  return { level, doors, mark };
+}
+
+// ===========================================================================
+// Power fixture (Epic E proof)
+// ===========================================================================
+
+// A single corridor: generator → wire → door → wire → vent. The closed door seals
+// the right pocket (cols 6–10), which starts depressurized so a powered vent visibly
+// repressurizes it. The wire is single-width, so cutting the gen-side cell (3,2)
+// disconnects BOTH the door and the vent from the generator in one snip.
+const POWER_FIXTURE_MAP: readonly string[] = [
+  '~~~~~~~~~~~~~~',
+  '~############~',
+  '~#G==+===v..#~',
+  '~############~',
+  '~~~~~~~~~~~~~~',
+];
+
+export interface PowerFixtureMarks {
+  readonly generator: number; // generator cell
+  readonly cutWire: number; // gen-side wire cell to cut/relay
+  readonly door: number; // door cell
+  readonly doorId: string; // door entity id
+  readonly vent: number; // vent cell (inside the sealed pocket)
+}
+
+export interface PowerFixtureStation {
+  readonly level: Level;
+  readonly doors: Door[];
+  readonly mark: PowerFixtureMarks;
+}
+
+/** Build the Epic-E power fixture: gen → wire → door → wire → vent. */
+export function buildPowerFixture(world: World, config: Config): PowerFixtureStation {
+  const level = layTiles(world, config, POWER_FIXTURE_MAP);
+  const { doors } = placeDoors(world, level, POWER_FIXTURE_MAP);
+
+  const wire = ensureU8Layer(level, 'wire');
+  for (let y = 0; y < POWER_FIXTURE_MAP.length; y++) {
+    for (let x = 0; x < level.width; x++) {
+      const ch = POWER_FIXTURE_MAP[y]![x]!;
+      if (ch === '=' || ch === 'v' || ch === 'G' || DOOR_CHARS.has(ch)) wire[levelCell(level, x, y)] = 1;
+    }
+  }
+
+  // Depressurize the whole sealed pocket (cols 6–11, the door's far side up to the
+  // hull) so the powered vent has somewhere to push pressure into.
+  const pressure = ensureFloatLayer(level, 'pressure');
+  for (let x = 6; x <= 11; x++) pressure[levelCell(level, x, 2)] = config.atmos.breathThreshold / 2;
+
+  const mark: PowerFixtureMarks = {
+    generator: levelCell(level, 2, 2),
+    cutWire: levelCell(level, 3, 2),
+    door: levelCell(level, 5, 2),
+    doorId: doors[0]!.id,
+    vent: levelCell(level, 9, 2),
   };
   return { level, doors, mark };
 }

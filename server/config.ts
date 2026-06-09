@@ -46,11 +46,26 @@ export interface RoundConfig {
   readonly shuttleAt: number;
 }
 
+export interface PowerConfig {
+  /** Generator fuel tank size (units); also the `max-fuel` stat base. */
+  readonly fuelCapacity: number;
+  /** Fuel units burned per second while the generator runs. */
+  readonly burnPerSecond: number;
+  /** World-ticks between fuel-drain steps (the generator's world-tick clock). */
+  readonly burnCadence: number;
+  /** Whether the generator is switched on at round start. */
+  readonly startsOn: boolean;
+  /** Generator entity glyph + colour (single colour — no gradients). */
+  readonly glyph: string;
+  readonly fg: string;
+}
+
 export interface Config {
   readonly ticksPerSecond: number;
   readonly atmos: AtmosConfig;
   readonly oxygen: OxygenConfig;
   readonly round: RoundConfig;
+  readonly power: PowerConfig;
   /** Melee damage by weapon class (game-design §4.1). */
   readonly weaponDamage: Readonly<Record<string, number>>;
   /** Access tags a door/locker may require; an ID grants a subset. */
@@ -86,6 +101,14 @@ export const config: Config = {
     minPlayers: 4,
     roundLength: 600,
     shuttleAt: 480,
+  },
+  power: {
+    fuelCapacity: 600, // ~roundLength seconds at burnPerSecond = 1
+    burnPerSecond: 1,
+    burnCadence: TICKS_PER_SECOND, // drain once per second
+    startsOn: true,
+    glyph: 'G',
+    fg: '#fd5',
   },
   weaponDamage: { fist: 5, tool: 12, knife: 25 },
   access: {
