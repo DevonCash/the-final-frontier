@@ -138,6 +138,8 @@ export interface Config {
   readonly cableLength: number;
   /** Local-say hearing radius in cells (distance, not line-of-sight). */
   readonly hearingRadius: number;
+  /** Local chat tunables (Epic I). */
+  readonly chat: { readonly maxLength: number };
   readonly emagCharges: number;
 }
 
@@ -219,5 +221,6 @@ export const config: Config = {
   repairUses: 3,
   cableLength: 10,
   hearingRadius: 7,
+  chat: { maxLength: 200 },
   emagCharges: 3,
 };

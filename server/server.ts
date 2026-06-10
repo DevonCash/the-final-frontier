@@ -20,11 +20,13 @@ import {
   type World,
   type Action,
   type Viewport,
+  type GameEvent,
 } from '../../rlkit/src/index';
 import { buildGameWorld } from './world';
 import { spawnCrew, TILES } from './content';
 import type { Station } from './station';
 import { config } from './config';
+import { perceive } from './perception';
 
 /** Per-player HUD extension carried on `PlayerView.extra` (R6). O₂ now; role/clock land in Epic H/J. */
 export interface CrewExtra {
@@ -134,6 +136,13 @@ const DECODERS: Record<string, Decoder> = {
     if (t.kind === 'cell' && Number.isInteger(t.cell)) return { type: 'useOn', actor, ...item, target: { kind: 'cell', cell: t.cell as number } };
     return null;
   },
+  // Local chat (Epic I): trim + length-cap the text; the handler emits a `chat:say`
+  // event that the transport fans out by earshot. Empty/over-long/non-string → drop.
+  say: (msg, actor) => {
+    if (typeof msg.text !== 'string') return null;
+    const text = msg.text.trim().slice(0, config.chat.maxLength);
+    return text ? { type: 'say', actor, text } : null;
+  },
 };
 
 /** Only accept browser clients from localhost; node clients (tests) send no Origin. */
@@ -202,17 +211,24 @@ export function startStationServer(opts: {
     acc += now - last;
     last = now;
     const ticks = Math.min(config.server.maxTickCatchup, Math.floor(acc / MS_PER_TICK));
+    const events: GameEvent[] = [];
     if (ticks > 0) {
       acc -= ticks * MS_PER_TICK;
-      game.tick(ticks);
+      events.push(...game.tick(ticks).events); // events only exist when the world advanced
     }
     // Frames can only differ if the world advanced (ticks>0) — including passive
     // changes like O₂ drain that don't go through an action — or if a freshly
     // joined socket still owes its first frame. A loop fire with no elapsed ticks
-    // can't change any existing frame, so skip the build+diff entirely.
+    // can't change any existing frame (and emits no events), so skip entirely.
     if (ticks === 0 && needsFrame.size === 0) return;
     for (const [ws, id] of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
+      // Fan out this tick's events, filtered to what this player can hear/see (Epic I).
+      for (const event of events) {
+        if (perceive(game, id, event, { hearingRadius: config.hearingRadius })) {
+          ws.send(JSON.stringify({ type: 'event', event }));
+        }
+      }
       if (ticks === 0 && !needsFrame.has(ws)) continue;
       needsFrame.delete(ws);
       const payload = JSON.stringify({ type: 'view', ...game.viewFor(id, viewport) });
