@@ -10,15 +10,48 @@
       canvas { display: block; margin: 6px auto; background: #000; image-rendering: pixelated; }
       #status { text-align: center; color: #fe9; font-size: 13px; min-height: 18px; }
       p { text-align: center; color: #777; font-size: 12px; line-height: 1.6; }
+
+      /* HUD (Epic J): a flat, monospace panel under the canvas. No gradients. */
+      #hud { width: 320px; margin: 6px auto 0; font-size: 12px; }
+      .hud-row { display: flex; align-items: center; gap: 6px; min-height: 18px; }
+      .hud-row[hidden] { display: none; } /* the flex rule above would otherwise defeat [hidden] */
+      .hud-label { color: #889; width: 36px; flex: none; }
+      #o2-bar { flex: 1; height: 10px; background: #1a1a20; border: 1px solid #333; }
+      #o2-fill { height: 100%; width: 0; background: #6cf; }
+      #o2-text { width: 56px; flex: none; text-align: right; color: #aab; }
+      #role-card { color: #9cf; }
+      #role-traitor { color: #f55; }
+      #clock { color: #8ad; }
+      #held { color: #cda; }
+      #prompt { color: #fe9; min-height: 18px; }
+      #prompt.denied { color: #f55; }
+      #chat { height: 96px; overflow-y: auto; margin-top: 4px; padding: 4px; background: #08080a; border: 1px solid #222; }
+      .chat-line { line-height: 1.5; word-break: break-word; }
+      .chat-speaker { color: #8ad; }
+      .chat-self .chat-speaker { color: #6c6; }
+      #chat-input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 3px 4px; font-family: monospace; font-size: 12px; color: #ccc; background: #08080a; border: 1px solid #222; }
     </style>
   </head>
   <body>
     <h1>T H E &nbsp; F I N A L &nbsp; F R O N T I E R</h1>
     <canvas id="game" width="320" height="112"></canvas>
     <div id="status">connecting…</div>
+    <div id="hud" hidden>
+      <div class="hud-row">
+        <span class="hud-label">O₂</span>
+        <span id="o2-bar"><span id="o2-fill"></span></span>
+        <span id="o2-text"></span>
+      </div>
+      <div class="hud-row"><span class="hud-label">Role</span><span id="role-card"></span></div>
+      <div class="hud-row" id="clock-row" hidden><span class="hud-label">Clock</span><span id="clock"></span></div>
+      <div class="hud-row"><span class="hud-label">Held</span><span id="held">—</span></div>
+      <div id="prompt"></div>
+      <div id="chat"></div>
+      <input id="chat-input" type="text" maxlength="200" placeholder="say something… (Enter)" autocomplete="off" />
+    </div>
     <p>
-      Move with arrow keys or W A S D. Each browser tab is a separate crew member on one
-      authoritative station server.<br />
+      Move with arrow keys or W A S D; press E to use a held tool on an adjacent door or
+      locker. Each browser tab is a separate crew member on one authoritative station server.<br />
       Open this page in a second tab to join as another crew member.
     </p>
     <script type="module" src="/src/main.ts"></script>

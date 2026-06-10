@@ -105,6 +105,28 @@ export interface RenderConfig {
   readonly corpse: Glyph;
 }
 
+/**
+ * HUD display config (Epic J). Pure presentation — labels, colors, thresholds, and
+ * the interact-key hint the thin client paints `PlayerView.extra` with. Shipped to
+ * the client once in the `welcome` message so config.ts stays the single source of
+ * truth (no styling literals in the client). No gradients (a flat fill/low pair).
+ */
+export interface HudConfig {
+  /** O₂ bar: segment count + fill/low colors, switching to `low` below `lowFraction`. */
+  readonly oxygen: {
+    readonly width: number;
+    readonly fill: string;
+    readonly low: string;
+    readonly lowFraction: number;
+  };
+  /** Per-job label + accent color; `traitor` overlays the secret antagonist's own card. */
+  readonly roles: Readonly<Record<'captain' | 'engineer' | 'crew' | 'traitor', { readonly label: string; readonly color: string }>>;
+  /** Interaction-prompt labels per usable target kind, plus the interact-key hint. */
+  readonly targets: { readonly door: string; readonly locker: string; readonly key: string };
+  /** Round-clock phase labels (shown only when the host provides a clock). */
+  readonly clock: Readonly<Record<'lobby' | 'setup' | 'shift' | 'departure' | 'reveal', string>>;
+}
+
 export interface Config {
   readonly ticksPerSecond: number;
   readonly atmos: AtmosConfig;
@@ -141,6 +163,8 @@ export interface Config {
   /** Local chat tunables (Epic I). */
   readonly chat: { readonly maxLength: number };
   readonly emagCharges: number;
+  /** Client HUD presentation (Epic J). */
+  readonly hud: HudConfig;
 }
 
 export const config: Config = {
@@ -223,4 +247,15 @@ export const config: Config = {
   hearingRadius: 7,
   chat: { maxLength: 200 },
   emagCharges: 3,
+  hud: {
+    oxygen: { width: 16, fill: '#6cf', low: '#f55', lowFraction: 0.25 },
+    roles: {
+      captain: { label: 'Captain', color: '#fd5' },
+      engineer: { label: 'Engineer', color: '#fa3' },
+      crew: { label: 'Crew', color: '#9cf' },
+      traitor: { label: 'Traitor', color: '#f55' },
+    },
+    targets: { door: 'door', locker: 'locker', key: 'E' },
+    clock: { lobby: 'Lobby', setup: 'Setup', shift: 'Shift', departure: 'Departure', reveal: 'Reveal' },
+  },
 };

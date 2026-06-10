@@ -15,22 +15,61 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   createGameServer,
   get,
+  cellOf,
+  neighbors4,
   type GameServer,
   type EntityId,
   type World,
   type Action,
   type Viewport,
   type GameEvent,
+  type Position,
 } from '../../rlkit/src/index';
 import { buildGameWorld } from './world';
 import { spawnCrew, TILES } from './content';
 import type { Station } from './station';
 import { config } from './config';
 import { perceive } from './perception';
+import { roleOf, setRole, type Job } from './role';
+import { giveItem, spawnIdCard } from './items';
 
-/** Per-player HUD extension carried on `PlayerView.extra` (R6). O₂ now; role/clock land in Epic H/J. */
+/**
+ * Per-player HUD extension carried on `PlayerView.extra` (R6), read per-viewer from
+ * the viewer's OWN entity only — the hidden-fog contract (never read another
+ * player's components, or role/held would leak under fog). O₂ (Epic A), role/held/
+ * targets (Epic J); `clock` is present only when a round-aware host provides it.
+ */
 export interface CrewExtra {
   oxygen?: { current: number; max: number };
+  /** The viewer's own job + secret traitor flag (its role briefing). */
+  role?: { job: Job; traitor: boolean };
+  /** The viewer's first carried item (name + tool kind, for the held-item slot + useOn). */
+  held?: { name: string; kind?: string };
+  /** Adjacent usable entities (doors/lockers) — the useOn interaction prompt's targets. */
+  targets?: Array<{ id: string; cell: number; label: string }>;
+  /** Round phase + seconds left; absent unless the host runs the round FSM (round.ts). */
+  clock?: { phase: 'lobby' | 'setup' | 'shift' | 'departure' | 'reveal'; secondsRemaining?: number };
+}
+
+interface InfoComponent {
+  type: 'info';
+  name: string;
+  [key: string]: unknown;
+}
+interface InventoryComponent {
+  type: 'inventory';
+  items: string[];
+  [key: string]: unknown;
+}
+interface ToolComponent {
+  type: 'tool';
+  kind: string;
+  [key: string]: unknown;
+}
+interface OpenableComponent {
+  type: 'openable';
+  kind: 'door' | 'locker';
+  [key: string]: unknown;
 }
 
 interface ResourcesComponent {
@@ -83,15 +122,54 @@ export function createStationServer(opts: {
     // vacated slots; fall back to any free floor cell only when all are taken.
     const free = station.mark.spawns.find((s) => !isOccupied(w, level.id, s));
     const cell = free ?? nextFreeFloor(w, level.id, tiles, floorIdx);
-    return spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
+    const id = spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
+    // Starter loadout so the HUD shows real role/held data on the simple host (Epic J):
+    // a plain crew briefing + a basic ID. The round controller assigns jobs/traitor and
+    // full kits instead when it drives spawns.
+    setRole(w.state.entities.get(id)!, 'crew', false);
+    giveItem(w, id, spawnIdCard(w, `id-${n + 1}`, [...config.access.ids.crew]));
+    return id;
   };
   const spawnPlayer = opts.spawnPlayer ? (w: World) => opts.spawnPlayer!(w, station) : defaultSpawn;
 
   const viewExtra = (w: World, id: EntityId): CrewExtra => {
     const e = w.state.entities.get(id);
-    const pools = e && get<ResourcesComponent>(e, 'resources')?.pools;
-    if (!pools?.oxygen) return {};
-    return { oxygen: { current: Math.round(pools.oxygen.current), max: config.oxygen.max } };
+    if (!e) return {};
+    const extra: CrewExtra = {};
+
+    const pools = get<ResourcesComponent>(e, 'resources')?.pools;
+    if (pools?.oxygen) extra.oxygen = { current: Math.round(pools.oxygen.current), max: config.oxygen.max };
+
+    // Role card: the viewer's own briefing (job + secret traitor flag).
+    const role = roleOf(e);
+    if (role) extra.role = { job: role.job, traitor: role.traitor };
+
+    // Held item: the first carried item — its display name + tool kind (for useOn).
+    const held = get<InventoryComponent>(e, 'inventory')?.items[0];
+    const heldEntity = held ? w.state.entities.get(held) : undefined;
+    if (heldEntity) {
+      const name = get<InfoComponent>(heldEntity, 'info')?.name ?? held!;
+      const kind = get<ToolComponent>(heldEntity, 'tool')?.kind;
+      extra.held = kind ? { name, kind } : { name };
+    }
+
+    // Interaction prompt: usable entities in the viewer's four adjacent cells (within
+    // its own FOV, so no fog leak). Doors/lockers are the useOn targets.
+    const pos = get<Position>(e, 'position');
+    const level = pos && w.state.levels.get(pos.levelId);
+    if (pos && level) {
+      const origin = cellOf({ x: pos.x, y: pos.y }, level.width);
+      const targets: NonNullable<CrewExtra['targets']> = [];
+      for (const nb of neighbors4(origin, level.width, level.height)) {
+        for (const occId of w.services.queries.at(nb, pos.levelId)) {
+          const occ = w.state.entities.get(occId);
+          const open = occ && get<OpenableComponent>(occ, 'openable');
+          if (open) targets.push({ id: occId, cell: nb, label: config.hud.targets[open.kind] });
+        }
+      }
+      if (targets.length) extra.targets = targets;
+    }
+    return extra;
   };
 
   const game = createGameServer<CrewExtra>({
@@ -179,7 +257,9 @@ export function startStationServer(opts: {
     const id = game.join();
     sockets.set(ws, id);
     needsFrame.add(ws);
-    ws.send(JSON.stringify({ type: 'welcome', playerId: id, viewport }));
+    // `hud` ships the HUD presentation config once so the client paints `extra`
+    // without duplicating any labels/colors/thresholds (config.ts stays canonical).
+    ws.send(JSON.stringify({ type: 'welcome', playerId: id, viewport, hud: config.hud }));
 
     ws.on('message', (data) => {
       let msg: Record<string, unknown>;

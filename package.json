@@ -16,8 +16,9 @@
     "proof:tools": "tsx server/tools-proof.ts",
     "proof:round": "tsx server/round-proof.ts",
     "proof:perception": "tsx server/perception-proof.ts",
+    "proof:hud": "tsx server/hud-proof.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run proof && npm run proof:breathing && npm run proof:net && npm run proof:station && npm run proof:interaction && npm run proof:items && npm run proof:power && npm run proof:tools && npm run proof:round && npm run proof:perception"
+    "test": "npm run typecheck && npm run proof && npm run proof:breathing && npm run proof:net && npm run proof:station && npm run proof:interaction && npm run proof:items && npm run proof:power && npm run proof:tools && npm run proof:round && npm run proof:perception && npm run proof:hud"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
