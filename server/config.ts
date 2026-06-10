@@ -44,6 +44,14 @@ export interface RoundConfig {
   readonly roundLength: number;
   /** When the shuttle is called / arrivals unlocks, seconds. */
   readonly shuttleAt: number;
+  /** Engineer slots filled after the single captain; the rest are crew. */
+  readonly engineerCount: number;
+}
+
+/** Starting tool kits by job — item `kind`s resolved to `spawn*` factories in round.ts. */
+export interface KitsConfig {
+  readonly engineer: readonly string[];
+  readonly traitor: readonly string[];
 }
 
 export interface PowerConfig {
@@ -113,8 +121,13 @@ export interface Config {
   readonly openableBumpPriority: number;
   /** Melee damage by weapon class (game-design §4.1). */
   readonly weaponDamage: Readonly<Record<string, number>>;
-  /** Access tags a door/locker may require; an ID grants a subset. */
-  readonly access: { readonly doors: Readonly<Record<string, string>> };
+  /** Access tags a door/locker may require, and the tag set each job's ID grants. */
+  readonly access: {
+    readonly doors: Readonly<Record<string, string>>;
+    readonly ids: Readonly<Record<'captain' | 'engineer' | 'crew', readonly string[]>>;
+  };
+  /** Starting tool kits by job. */
+  readonly kits: KitsConfig;
   /** Seconds a door stays open before auto-closing. */
   readonly doorAutoClose: number;
   /** Melee hits to smash a window; welder uses to cut a wall / repair a breach. */
@@ -148,6 +161,7 @@ export const config: Config = {
     minPlayers: 4,
     roundLength: 600,
     shuttleAt: 480,
+    engineerCount: 1,
   },
   power: {
     fuelCapacity: 600, // ~roundLength seconds at burnPerSecond = 1
@@ -189,6 +203,15 @@ export const config: Config = {
   weaponDamage: { fist: 5, tool: 12, knife: 25 },
   access: {
     doors: { bridge: 'bridge', engineering: 'engineering', maintenance: 'maintenance' },
+    ids: {
+      captain: ['bridge', 'engineering', 'maintenance'], // all access
+      engineer: ['engineering', 'maintenance'],
+      crew: [], // basic: a plain ID with no special access (still loseable/lootable)
+    },
+  },
+  kits: {
+    engineer: ['welder', 'wrench', 'crowbar', 'wirecutters', 'cable', 'o2tank'],
+    traitor: ['emag', 'knife'], // on top of the job kit; emag uses config.emagCharges
   },
   doorAutoClose: 4,
   windowHits: 3,

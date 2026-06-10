@@ -21,6 +21,7 @@ import {
   remove,
   pointOf,
   cellOf,
+  neighbors4,
   BLOCK,
   type World,
   type EntityId,
@@ -35,7 +36,7 @@ import {
   type ComponentRegistry,
   type Registry,
 } from '../../rlkit/src/index';
-import { FLAGS } from './content';
+import { FLAGS, TILES } from './content';
 import { hasAccess } from './items';
 import { config } from './config';
 
@@ -71,6 +72,7 @@ export function setOpen(world: World, id: EntityId, open: boolean): GameEvent[] 
   o.open = open;
   const pos = e.components.get('position') as { x: number; y: number; levelId: string } | undefined;
   setGlyph(e, glyphFor(o.kind, open));
+  const events: GameEvent[] = [{ type: open ? 'openable:opened' : 'openable:closed', entity: id, kind: o.kind }];
 
   if (o.kind === 'door' && pos) {
     const tf = e.components.get('tileFlags') as { type: 'tileFlags'; flags: string[] } | undefined;
@@ -84,7 +86,56 @@ export function setOpen(world: World, id: EntityId, open: boolean): GameEvent[] 
     const level = world.state.levels.get(pos.levelId);
     if (level) world.services.flagIndex.forLevel(pos.levelId).invalidateCell(cellOf({ x: pos.x, y: pos.y }, level.width));
   }
-  return [{ type: open ? 'openable:opened' : 'openable:closed', entity: id, kind: o.kind }];
+
+  // A locker that opens dumps its contents onto the floor (a container, not a
+  // bespoke "give to opener" rule): the disk becomes a floor item the opener picks
+  // up with the Epic-F `pickup`. The closed locker blocks its own cell, so spill
+  // to a free neighbour. Doors never carry an inventory, so they skip this.
+  if (o.kind === 'locker' && open && pos) events.push(...spillInventory(world, e, pos.levelId));
+
+  return events;
+}
+
+/** Move every item out of a container entity onto free floor cells near it. */
+function spillInventory(world: World, container: Entity, levelId: string): GameEvent[] {
+  const inv = container.components.get('inventory') as { type: 'inventory'; items: string[] } | undefined;
+  if (!inv || inv.items.length === 0) return [];
+  const level = world.state.levels.get(levelId);
+  const cpos = container.components.get('position') as { x: number; y: number } | undefined;
+  if (!level || !cpos) return [];
+  const origin = cellOf({ x: cpos.x, y: cpos.y }, level.width);
+
+  const events: GameEvent[] = [];
+  const spilled = inv.items.splice(0); // empty the container
+  for (const itemId of spilled) {
+    const item = world.state.entities.get(itemId);
+    if (!item) continue;
+    const dest = freeFloorNear(world, levelId, origin);
+    const { x, y } = pointOf(dest, level.width);
+    set(item, { type: 'position', x, y, levelId });
+    world.services.queries.onComponentAdded(item, 'position');
+    world.services.queries.place(itemId, levelId, dest);
+    events.push({ type: 'container:spilled', container: container.id, item: itemId, cell: dest });
+  }
+  return events;
+}
+
+/** A floor cell near `origin` with no blocking occupant; falls back to a row scan. */
+function freeFloorNear(world: World, levelId: string, origin: number): number {
+  const level = world.state.levels.get(levelId)!;
+  const floorIdx = world.services.tiles.index(TILES.floor);
+  const tiles = level.layers.get('tiles') as Uint16Array;
+  const free = (c: number): boolean => {
+    if (tiles[c] !== floorIdx) return false;
+    for (const occ of world.services.queries.at(c, levelId)) {
+      const oe = world.state.entities.get(occ);
+      if (oe?.components.has('openable') || oe?.components.has('resources')) return false; // door/locker/actor
+    }
+    return true;
+  };
+  for (const nb of neighbors4(origin, level.width, level.height)) if (free(nb)) return nb;
+  for (let c = 0; c < tiles.length; c++) if (free(c)) return c; // fallback: never lose the disk
+  return origin; // pathological: pile on the container's own cell
 }
 
 /** An effect that opens/closes an openable through the action pipeline. */
@@ -103,6 +154,15 @@ export function breakOpen(world: World, id: EntityId): GameEvent[] {
   if (!e || !o) return [];
   o.broken = true;
   return [{ type: 'openable:broken', entity: id }, ...setOpen(world, id, true)];
+}
+
+/** Bolt/unbolt an openable (the shuttle-airlock lock; bolted denies the bump). */
+export function setBolted(world: World, id: EntityId, bolted: boolean): GameEvent[] {
+  const e = world.state.entities.get(id);
+  const o = e && get<Openable>(e, 'openable');
+  if (!e || !o || o.bolted === bolted) return [];
+  o.bolted = bolted;
+  return [{ type: bolted ? 'openable:bolted' : 'openable:unbolted', entity: id }];
 }
 
 /** An effect that emags an openable through the action pipeline. */

@@ -26,6 +26,7 @@ import { registerItems } from './items';
 import { registerOpenable } from './openable';
 import { registerUseOn } from './useon';
 import { registerCorpses } from './corpse';
+import { registerRoles } from './role';
 import { registerPower } from './power';
 import { config, type Config } from './config';
 
@@ -59,6 +60,7 @@ function assemble<S>(seed: number, build: (world: World, config: Config) => S): 
   registerItems(world); // component schemas (tags/tool) + activate verb (O₂ tank)
   registerOpenable(world); // openable component + on:bump rule + handler
   registerCorpses(world); // corpse component + died→corpse reactor + loot bump rule
+  registerRoles(world); // role component (job + secret traitor flag) for save validation
   registerUseOn(world); // useOn handler + tool rules (crowbar/emag + welder/wrench/cutters/cable)
   registerContent(world);
   const station = build(world, config);

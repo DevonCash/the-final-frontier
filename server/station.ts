@@ -15,6 +15,7 @@
  *   '+' airlock    'A' shuttle airlock   'E' external (EVA) airlock
  *   '=' floor carrying the power wire (the corridor spine)
  *   'v' vent       's' crew spawn  'C' captain spawn   'L' locker   'G' generator
+ *   'b' shuttle berth (arrivals escape zone)
  * Every glyph but space/hull/window decodes to a floor tile; the rest are marks,
  * wire, or entities placed on that floor (one source of truth — the map).
  */
@@ -48,6 +49,7 @@ const CHAR_TILE: Record<string, string> = {
   C: TILES.floor,
   L: TILES.floor,
   G: TILES.floor,
+  b: TILES.floor, // shuttle berth (arrivals): the escape zone behind the shuttle airlock
 };
 const DOOR_CHARS = new Set(['+', 'A', 'E']);
 
@@ -123,12 +125,12 @@ const STATION_MAP: readonly string[] = [
   '~#============================================#~',
   '~#============================================#~',
   '~#########+###########==######+############A###~',
-  '~#........=..........#==#.....=.........#..=..#~',
-  '~#........=..........#==#.....=.........#..=..#~',
-  '~#........=..........#==#.....=.........#..=..#~',
-  '~#...v=====..........#==#.....v.........#..v..#~',
-  '~#...................#==#...............#.....#~',
-  '~#...................#==#...............#.....#~',
+  '~#........=..........#==#.....=.........#bb=bb#~',
+  '~#........=..........#==#.....=.........#bb=bb#~',
+  '~#........=..........#==#.....=.........#bb=bb#~',
+  '~#...v=====..........#==#.....v.........#bbvbb#~',
+  '~#...................#==#...............#bbbbb#~',
+  '~#...................#==#...............#bbbbb#~',
   '~#####################E########################~',
   '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
 ];
@@ -142,6 +144,7 @@ export interface StationMarks {
   readonly locker?: number; // bridge
   readonly shuttleDoor?: number; // arrivals airlock
   readonly externalAirlock?: number; // EVA airlock through the south hull
+  readonly shuttleZone: number[]; // arrivals-berth cells: alive-here-at-reveal = escaped
 }
 
 export interface Station {
@@ -162,6 +165,7 @@ export function buildStation(world: World, config: Config): Station {
   const wire = ensureU8Layer(level, 'wire');
   const spawns: number[] = [];
   const vents: number[] = [];
+  const shuttleZone: number[] = [];
   let captainSpawn: number | undefined;
   let generator: number | undefined;
   let locker: number | undefined;
@@ -175,6 +179,7 @@ export function buildStation(world: World, config: Config): Station {
         case 'C': captainSpawn = cell; break;
         case 'G': generator = cell; break;
         case 'L': locker = cell; break;
+        case 'b': shuttleZone.push(cell); break;
       }
       // Wire members: the spine/branches AND the consumer cells they feed (vents,
       // locker, generator, doors) — so each consumer reads its own cell's network.
@@ -185,6 +190,7 @@ export function buildStation(world: World, config: Config): Station {
   const mark: StationMarks = {
     spawns,
     vents,
+    shuttleZone,
     ...(captainSpawn !== undefined ? { captainSpawn } : {}),
     ...(generator !== undefined ? { generator } : {}),
     ...(locker !== undefined ? { locker } : {}),
