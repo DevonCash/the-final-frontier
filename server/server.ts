@@ -23,6 +23,7 @@ import {
 } from '../../rlkit/src/index';
 import { buildGameWorld } from './world';
 import { spawnCrew, TILES } from './content';
+import type { Station } from './station';
 import { config } from './config';
 
 /** Per-player HUD extension carried on `PlayerView.extra` (R6). O₂ now; role/clock land in Epic H/J. */
@@ -39,6 +40,8 @@ interface ResourcesComponent {
 export interface StationServer {
   game: GameServer<CrewExtra>;
   viewport: Viewport;
+  world: World;
+  station: Station;
 }
 
 /** Whether any entity occupies a cell. */
@@ -55,15 +58,24 @@ function nextFreeFloor(world: World, levelId: string, tiles: Uint16Array, floorI
   throw new Error('nextFreeFloor: no unoccupied floor cell left to spawn a crew member');
 }
 
-/** Wrap the station world in a GameServer: crew-per-join, O₂ HUD extra, fog mode. */
-export function createStationServer(opts: { seed?: number; fog?: 'shared' | 'hidden' } = {}): StationServer {
+/**
+ * Wrap the station world in a GameServer: O₂ HUD extra + fog mode. By default each
+ * `join` spawns a plain crew member at a free dorm slot (the dev/`net-proof` path).
+ * The round controller (`round.ts`) injects a job-aware `spawnPlayer` instead — the
+ * seam that lets one builder serve both the simple host and round play.
+ */
+export function createStationServer(opts: {
+  seed?: number;
+  fog?: 'shared' | 'hidden';
+  spawnPlayer?: (world: World, station: Station) => EntityId;
+} = {}): StationServer {
   const { world, station } = buildGameWorld(opts.seed ?? 12345);
   const level = station.level;
   const floorIdx = world.services.tiles.index(TILES.floor);
   const tiles = level.layers.get('tiles') as Uint16Array;
 
   let joined = 0;
-  const spawnPlayer = (w: World): EntityId => {
+  const defaultSpawn = (w: World): EntityId => {
     const n = joined++;
     // Prefer the first FREE designated crew spawn (dorms) so reconnects reuse
     // vacated slots; fall back to any free floor cell only when all are taken.
@@ -71,6 +83,7 @@ export function createStationServer(opts: { seed?: number; fog?: 'shared' | 'hid
     const cell = free ?? nextFreeFloor(w, level.id, tiles, floorIdx);
     return spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
   };
+  const spawnPlayer = opts.spawnPlayer ? (w: World) => opts.spawnPlayer!(w, station) : defaultSpawn;
 
   const viewExtra = (w: World, id: EntityId): CrewExtra => {
     const e = w.state.entities.get(id);
@@ -85,7 +98,7 @@ export function createStationServer(opts: { seed?: number; fog?: 'shared' | 'hid
     fog: opts.fog ?? 'shared',
     viewExtra,
   });
-  return { game, viewport: { width: level.width, height: level.height } };
+  return { game, viewport: { width: level.width, height: level.height }, world, station };
 }
 
 // --- WebSocket transport ----------------------------------------------------

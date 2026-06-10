@@ -14,8 +14,9 @@
     "proof:items": "tsx server/items-proof.ts",
     "proof:power": "tsx server/power-proof.ts",
     "proof:tools": "tsx server/tools-proof.ts",
+    "proof:round": "tsx server/round-proof.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run proof && npm run proof:breathing && npm run proof:net && npm run proof:station && npm run proof:interaction && npm run proof:items && npm run proof:power && npm run proof:tools"
+    "test": "npm run typecheck && npm run proof && npm run proof:breathing && npm run proof:net && npm run proof:station && npm run proof:interaction && npm run proof:items && npm run proof:power && npm run proof:tools && npm run proof:round"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
