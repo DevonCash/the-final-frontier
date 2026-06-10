@@ -221,13 +221,14 @@ export function startStationServer(opts: {
     // joined socket still owes its first frame. A loop fire with no elapsed ticks
     // can't change any existing frame (and emits no events), so skip entirely.
     if (ticks === 0 && needsFrame.size === 0) return;
+    // Pre-serialize each event once (the payload is socket-independent; only the
+    // per-viewer `perceive` decision differs).
+    const wire = events.map((event) => ({ event, json: JSON.stringify({ type: 'event', event }) }));
     for (const [ws, id] of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
       // Fan out this tick's events, filtered to what this player can hear/see (Epic I).
-      for (const event of events) {
-        if (perceive(game, id, event, { hearingRadius: config.hearingRadius })) {
-          ws.send(JSON.stringify({ type: 'event', event }));
-        }
+      for (const { event, json } of wire) {
+        if (perceive(game, id, event, { hearingRadius: config.hearingRadius })) ws.send(json);
       }
       if (ticks === 0 && !needsFrame.has(ws)) continue;
       needsFrame.delete(ws);
