@@ -34,6 +34,30 @@ const WS_URL = `ws://${location.hostname}:${SERVER_PORT}`;
 let socket: WebSocket | undefined;
 let playerId: string | undefined;
 
+// --- perf instrumentation (dormant unless ?perf=1) --------------------------
+// Attributes the per-frame budget across the wire (view msgs/s, KB/s), parse,
+// canvas draw, and HUD paint, plus real on-screen fps via rAF. Logs a rolling
+// per-second summary to the console. Zero cost when the flag is off.
+const PERF = new URLSearchParams(location.search).get('perf') === '1';
+const perf = { frames: 0, draws: 0, extras: 0, bytes: 0, parse: 0, draw: 0, hud: 0, raf: 0 };
+if (PERF) {
+  const rafTick = (): void => {
+    perf.raf++;
+    requestAnimationFrame(rafTick);
+  };
+  requestAnimationFrame(rafTick);
+  setInterval(() => {
+    const d = perf.draws || 1;
+    const f = perf.frames || 1;
+    console.log(
+      `[perf] view ${perf.frames}/s  draws ${perf.draws}/s  extra ${perf.extras}/s  ${(perf.bytes / 1024).toFixed(1)}KB/s  ` +
+        `rAF ${perf.raf}fps  parse ${(perf.parse / f).toFixed(2)}ms  draw ${(perf.draw / d).toFixed(2)}ms  ` +
+        `hud ${(perf.hud / f).toFixed(2)}ms`,
+    );
+    perf.frames = perf.draws = perf.bytes = perf.parse = perf.draw = perf.hud = perf.raf = 0;
+  }, 1000);
+}
+
 // The HUD presentation config shipped in `welcome` (mirrors config.ts `HudConfig`).
 interface HudConfig {
   oxygen: { fill: string; low: string; lowFraction: number };
@@ -67,53 +91,67 @@ interface ViewMsg {
 // The viewer's current adjacent target (if any) — what the interact key acts on.
 let target: { id: string; cell: number; label: string } | undefined;
 let held: CrewExtra['held'];
+// Latest HUD state, applied whenever a `view` or `extra` message lands.
+let alive = false;
+let lastExtra: CrewExtra | undefined;
 
-function paintHud(extra: CrewExtra | undefined, alive: boolean): void {
-  hudEl.hidden = false;
+// paintHud write-guards: only touch the DOM when a field actually changed, so the
+// throttled per-tick HUD updates don't thrash layout for unchanged role/held/prompt.
+const painted: Record<string, string> = {};
+function set(el: HTMLElement, key: string, prop: 'textContent' | 'width' | 'background' | 'color', val: string): void {
+  if (painted[key] === val) return;
+  painted[key] = val;
+  if (prop === 'textContent') el.textContent = val;
+  else (el.style as unknown as Record<string, string>)[prop] = val;
+}
+
+function paintHud(extra: CrewExtra | undefined, isAlive: boolean): void {
+  if (hudEl.hidden) hudEl.hidden = false;
 
   // O₂ bar: fill width by fraction, switching to the low color below the threshold.
   const o2 = extra?.oxygen;
   if (o2 && hud) {
     const frac = Math.max(0, Math.min(1, o2.current / o2.max));
-    o2Fill.style.width = `${frac * 100}%`;
-    o2Fill.style.background = frac <= hud.oxygen.lowFraction ? hud.oxygen.low : hud.oxygen.fill;
-    o2Text.textContent = `${o2.current}/${o2.max}`;
+    set(o2Fill, 'o2w', 'width', `${frac * 100}%`);
+    set(o2Fill, 'o2bg', 'background', frac <= hud.oxygen.lowFraction ? hud.oxygen.low : hud.oxygen.fill);
+    set(o2Text, 'o2t', 'textContent', `${o2.current}/${o2.max}`);
   } else {
-    o2Fill.style.width = '0';
-    o2Text.textContent = '';
+    set(o2Fill, 'o2w', 'width', '0');
+    set(o2Text, 'o2t', 'textContent', '');
   }
 
   // Role card: the job's label/color, with the traitor accent when the viewer is one.
   const role = extra?.role;
   if (role && hud) {
     const job = hud.roles[role.job]?.label ?? role.job;
-    roleCard.textContent = role.traitor ? `${job} · ${hud.roles.traitor?.label ?? 'Traitor'}` : job;
-    roleCard.style.color = (role.traitor ? hud.roles.traitor : hud.roles[role.job])?.color ?? '#9cf';
+    set(roleCard, 'roleT', 'textContent', role.traitor ? `${job} · ${hud.roles.traitor?.label ?? 'Traitor'}` : job);
+    set(roleCard, 'roleC', 'color', (role.traitor ? hud.roles.traitor : hud.roles[role.job])?.color ?? '#9cf');
   } else {
-    roleCard.textContent = '—';
+    set(roleCard, 'roleT', 'textContent', '—');
   }
 
   // Round clock: only when the host actually provides one (the simple host does not).
   if (extra?.clock && hud) {
-    clockRow.hidden = false;
+    if (clockRow.hidden) clockRow.hidden = false;
     const label = hud.clock[extra.clock.phase] ?? extra.clock.phase;
     const secs = extra.clock.secondsRemaining;
-    clockEl.textContent = secs === undefined ? label : `${label} · ${Math.ceil(secs)}s`;
-  } else {
+    set(clockEl, 'clk', 'textContent', secs === undefined ? label : `${label} · ${Math.ceil(secs)}s`);
+  } else if (!clockRow.hidden) {
     clockRow.hidden = true;
   }
 
   held = extra?.held;
-  heldEl.textContent = held ? held.name : '—';
+  set(heldEl, 'held', 'textContent', held ? held.name : '—');
 
   // Interaction prompt: the first adjacent usable target, but only when the held item
   // is actually a tool — `useOn` needs a tool kind, so an ID card can't act on a door.
   target = extra?.targets?.[0];
-  if (alive && target && hud && held?.kind) {
-    promptEl.textContent = `[${hud.targets.key}] use ${held.name} on ${target.label}`;
-  } else {
-    promptEl.textContent = '';
-  }
+  set(
+    promptEl,
+    'prompt',
+    'textContent',
+    isAlive && target && hud && held?.kind ? `[${hud.targets.key}] use ${held.name} on ${target.label}` : '',
+  );
 }
 
 /** Append a chat line. `text` is verbatim from another player — `textContent` only (no XSS). */
@@ -133,14 +171,18 @@ function appendChat(speaker: string | undefined, text: string | undefined): void
 let denyTimer: ReturnType<typeof setTimeout> | undefined;
 /** Flash the prompt red briefly when a useOn was denied (Epic I `access:denied`). */
 function flashDenied(): void {
-  const prev = promptEl.textContent;
+  const prev = promptEl.textContent ?? '';
   promptEl.classList.add('denied');
   promptEl.textContent = 'access denied';
+  painted.prompt = 'access denied'; // keep the write-guard cache in sync (see `set`)
   clearTimeout(denyTimer);
   denyTimer = setTimeout(() => {
     promptEl.classList.remove('denied');
     // Restore the prompt if a fresh frame hasn't already repainted it (static world).
-    if (promptEl.textContent === 'access denied') promptEl.textContent = prev;
+    if (promptEl.textContent === 'access denied') {
+      promptEl.textContent = prev;
+      painted.prompt = prev;
+    }
   }, 600);
 }
 
@@ -153,11 +195,17 @@ function connect(): void {
     setTimeout(connect, 1000);
   };
   ws.onmessage = (ev) => {
+    const data = ev.data as string;
+    const t0 = PERF ? performance.now() : 0;
     let msg: ViewMsg;
     try {
-      msg = JSON.parse(ev.data as string) as ViewMsg;
+      msg = JSON.parse(data) as ViewMsg;
     } catch {
       return; // ignore a malformed frame rather than throwing in the handler
+    }
+    if (PERF) {
+      perf.parse += performance.now() - t0;
+      perf.bytes += data.length;
     }
     if (msg.type === 'welcome' && msg.viewport) {
       canvas.width = msg.viewport.width * TILE;
@@ -165,9 +213,30 @@ function connect(): void {
       hud = msg.hud;
       playerId = msg.playerId;
     } else if (msg.type === 'view' && msg.frame) {
+      // Render frame (cells only). The server now dedups frames, so every `view` that
+      // arrives is a real visual change — draw it. The HUD rides separate `extra` msgs.
+      if (PERF) perf.frames++;
+      const t1 = PERF ? performance.now() : 0;
       renderer.draw(msg.frame);
-      statusEl.textContent = msg.alive ? 'you' : 'YOU DIED';
-      paintHud(msg.extra, msg.alive ?? false);
+      const t2 = PERF ? performance.now() : 0;
+      alive = msg.alive ?? alive;
+      statusEl.textContent = alive ? 'you' : 'YOU DIED';
+      paintHud(lastExtra, alive); // alive may have flipped; targets/o2 come from lastExtra
+      if (PERF) {
+        perf.draws++;
+        perf.draw += t2 - t1;
+        perf.hud += performance.now() - t2;
+      }
+    } else if (msg.type === 'extra') {
+      // Throttled HUD update — no canvas redraw, just guarded DOM writes.
+      const t = PERF ? performance.now() : 0;
+      lastExtra = msg.extra;
+      alive = msg.alive ?? alive;
+      paintHud(lastExtra, alive);
+      if (PERF) {
+        perf.extras++;
+        perf.hud += performance.now() - t;
+      }
     } else if (msg.type === 'event' && msg.event) {
       if (msg.event.type === 'chat:say') appendChat(msg.event.speaker, msg.event.text);
       else if (msg.event.type === 'access:denied') flashDenied();

@@ -135,7 +135,12 @@ export interface Config {
   /** Actor stats (authored content; oxygen max lives under `oxygen`). */
   readonly stats: { readonly maxHp: number };
   /** Server loop tunables. */
-  readonly server: { readonly maxTickCatchup: number };
+  readonly server: {
+    readonly maxTickCatchup: number;
+    /** Ticks between HUD `extra` sends — throttles the O₂/role payload below the tick
+     *  rate so it doesn't defeat the render-frame dedup (a bar needs only a few Hz). */
+    readonly extraEveryTicks: number;
+  };
   /** Render glyphs, colors, and draw layers (config-vs-logic pillar). */
   readonly render: RenderConfig;
   /** Bump-interaction priority for the openable on:bump rule (above the absent attack rule). */
@@ -195,7 +200,7 @@ export const config: Config = {
     startsOn: true,
   },
   stats: { maxHp: 100 },
-  server: { maxTickCatchup: 8 },
+  server: { maxTickCatchup: 8, extraEveryTicks: 5 }, // 5 ticks = 5 Hz HUD updates at 25 tps
   render: {
     layers: { corpse: 2, item: 3, openable: 4, actor: 5 },
     crew: { glyph: '@', fg: '#fff' },

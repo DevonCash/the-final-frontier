@@ -244,7 +244,8 @@ export function startStationServer(opts: {
 }): RunningServer {
   const { game, viewport } = createStationServer({ seed: opts.seed, fog: opts.fog });
   const sockets = new Map<WebSocket, EntityId>();
-  const lastSent = new Map<WebSocket, string>();
+  const lastSent = new Map<WebSocket, string>(); // last render-frame payload (dedup)
+  const lastExtra = new Map<WebSocket, string>(); // last HUD-extra payload (dedup)
   const needsFrame = new Set<WebSocket>(); // fresh sockets still owed their first frame
   const originOk = opts.allowedOrigin ?? localhostOnly;
 
@@ -276,6 +277,7 @@ export function startStationServer(opts: {
     ws.on('close', () => {
       sockets.delete(ws);
       lastSent.delete(ws);
+      lastExtra.delete(ws);
       needsFrame.delete(ws);
       game.leave(id);
     });
@@ -286,6 +288,7 @@ export function startStationServer(opts: {
   const MS_PER_TICK = 1000 / config.ticksPerSecond;
   let last = Date.now();
   let acc = 0;
+  let extraAcc = 0; // sim-ticks since the last HUD-extra window (throttle)
   const loop = setInterval(() => {
     const now = Date.now();
     acc += now - last;
@@ -296,6 +299,12 @@ export function startStationServer(opts: {
       acc -= ticks * MS_PER_TICK;
       events.push(...game.tick(ticks).events); // events only exist when the world advanced
     }
+    // HUD `extra` rides a throttled cadence (a few Hz) so it doesn't re-send a full
+    // render frame every tick just because O₂ ticked down — the bug that defeated the
+    // frame dedup and flooded the client. Gated globally by sim time; deduped per socket.
+    extraAcc += ticks;
+    const extraDue = extraAcc >= config.server.extraEveryTicks;
+    if (extraDue) extraAcc = 0;
     // Frames can only differ if the world advanced (ticks>0) — including passive
     // changes like O₂ drain that don't go through an action — or if a freshly
     // joined socket still owes its first frame. A loop fire with no elapsed ticks
@@ -310,12 +319,26 @@ export function startStationServer(opts: {
       for (const { event, json } of wire) {
         if (perceive(game, id, event, { hearingRadius: config.hearingRadius })) ws.send(json);
       }
-      if (ticks === 0 && !needsFrame.has(ws)) continue;
+      const fresh = needsFrame.has(ws);
+      if (ticks === 0 && !fresh) continue;
       needsFrame.delete(ws);
-      const payload = JSON.stringify({ type: 'view', ...game.viewFor(id, viewport) });
-      if (payload === lastSent.get(ws)) continue; // skip an unchanged frame
-      lastSent.set(ws, payload);
-      ws.send(payload);
+      const view = game.viewFor(id, viewport);
+      // Render frame (cells only): dedup is now effective — a static map sends nothing,
+      // because the fast-changing HUD `extra` no longer rides this payload.
+      const framePayload = JSON.stringify({ type: 'view', frame: view.frame, alive: view.alive });
+      if (framePayload !== lastSent.get(ws)) {
+        lastSent.set(ws, framePayload);
+        ws.send(framePayload);
+      }
+      // HUD extra (O₂/role/held/targets): throttled + deduped, so the cheap HUD update
+      // never forces an expensive canvas redraw on the client.
+      if (view.extra !== undefined && (fresh || extraDue)) {
+        const extraPayload = JSON.stringify({ type: 'extra', extra: view.extra, alive: view.alive });
+        if (extraPayload !== lastExtra.get(ws)) {
+          lastExtra.set(ws, extraPayload);
+          ws.send(extraPayload);
+        }
+      }
     }
   }, MS_PER_TICK);
 
