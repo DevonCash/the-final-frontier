@@ -105,6 +105,27 @@ export interface RenderConfig {
   readonly corpse: Glyph;
 }
 
+/**
+ * HUD display config (Epic J). Pure presentation — labels, colors, thresholds, and
+ * the interact-key hint the thin client paints `PlayerView.extra` with. Shipped to
+ * the client once in the `welcome` message so config.ts stays the single source of
+ * truth (no styling literals in the client). No gradients (a flat fill/low pair).
+ */
+export interface HudConfig {
+  /** O₂ bar fill/low colors, switching to `low` below `lowFraction` (0..1). */
+  readonly oxygen: {
+    readonly fill: string;
+    readonly low: string;
+    readonly lowFraction: number;
+  };
+  /** Per-job label + accent color; `traitor` overlays the secret antagonist's own card. */
+  readonly roles: Readonly<Record<'captain' | 'engineer' | 'crew' | 'traitor', { readonly label: string; readonly color: string }>>;
+  /** Interaction-prompt labels per usable target kind, plus the interact-key hint. */
+  readonly targets: { readonly door: string; readonly locker: string; readonly key: string };
+  /** Round-clock phase labels (shown only when the host provides a clock). */
+  readonly clock: Readonly<Record<'lobby' | 'setup' | 'shift' | 'departure' | 'reveal', string>>;
+}
+
 export interface Config {
   readonly ticksPerSecond: number;
   readonly atmos: AtmosConfig;
@@ -114,7 +135,12 @@ export interface Config {
   /** Actor stats (authored content; oxygen max lives under `oxygen`). */
   readonly stats: { readonly maxHp: number };
   /** Server loop tunables. */
-  readonly server: { readonly maxTickCatchup: number };
+  readonly server: {
+    readonly maxTickCatchup: number;
+    /** Ticks between HUD `extra` sends — throttles the O₂/role payload below the tick
+     *  rate so it doesn't defeat the render-frame dedup (a bar needs only a few Hz). */
+    readonly extraEveryTicks: number;
+  };
   /** Render glyphs, colors, and draw layers (config-vs-logic pillar). */
   readonly render: RenderConfig;
   /** Bump-interaction priority for the openable on:bump rule (above the absent attack rule). */
@@ -138,7 +164,11 @@ export interface Config {
   readonly cableLength: number;
   /** Local-say hearing radius in cells (distance, not line-of-sight). */
   readonly hearingRadius: number;
+  /** Local chat tunables (Epic I). */
+  readonly chat: { readonly maxLength: number };
   readonly emagCharges: number;
+  /** Client HUD presentation (Epic J). */
+  readonly hud: HudConfig;
 }
 
 export const config: Config = {
@@ -170,7 +200,7 @@ export const config: Config = {
     startsOn: true,
   },
   stats: { maxHp: 100 },
-  server: { maxTickCatchup: 8 },
+  server: { maxTickCatchup: 8, extraEveryTicks: 5 }, // 5 ticks = 5 Hz HUD updates at 25 tps
   render: {
     layers: { corpse: 2, item: 3, openable: 4, actor: 5 },
     crew: { glyph: '@', fg: '#fff' },
@@ -219,5 +249,17 @@ export const config: Config = {
   repairUses: 3,
   cableLength: 10,
   hearingRadius: 7,
+  chat: { maxLength: 200 },
   emagCharges: 3,
+  hud: {
+    oxygen: { fill: '#6cf', low: '#f55', lowFraction: 0.25 },
+    roles: {
+      captain: { label: 'Captain', color: '#fd5' },
+      engineer: { label: 'Engineer', color: '#fa3' },
+      crew: { label: 'Crew', color: '#9cf' },
+      traitor: { label: 'Traitor', color: '#f55' },
+    },
+    targets: { door: 'door', locker: 'locker', key: 'E' },
+    clock: { lobby: 'Lobby', setup: 'Setup', shift: 'Shift', departure: 'Departure', reveal: 'Reveal' },
+  },
 };

@@ -28,20 +28,27 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const countGlyph = (f: RenderFrame | undefined, g: string) =>
   f ? f.cells.reduce((n, c) => n + (c.glyph === g ? 1 : 0), 0) : 0;
 
+interface GameEventMsg {
+  type: string;
+  [key: string]: unknown;
+}
+
 interface Client {
   ws: WebSocket;
   playerId?: string;
   lastFrame?: RenderFrame;
+  events: GameEventMsg[]; // `{type:'event'}` payloads the server fanned out to this client
 }
 
 function connect(port: number): Promise<Client> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${port}`);
-    const client: Client = { ws };
+    const client: Client = { ws, events: [] };
     ws.on('message', (d) => {
-      const m = JSON.parse(String(d)) as { type: string; playerId?: string; frame?: RenderFrame };
+      const m = JSON.parse(String(d)) as { type: string; playerId?: string; frame?: RenderFrame; event?: GameEventMsg };
       if (m.type === 'welcome') client.playerId = m.playerId;
       if (m.type === 'view') client.lastFrame = m.frame;
+      if (m.type === 'event' && m.event) client.events.push(m.event);
     });
     ws.on('open', () => resolve(client));
     ws.on('error', reject);
@@ -88,6 +95,16 @@ async function main(): Promise<void> {
   a.ws.send('not json at all');
   await sleep(200);
   check('host still serving after bad input', a.ws.readyState === WebSocket.OPEN);
+
+  console.log('chat rides the wire; internal events do not (Epic I fan-out)');
+  // B speaks: it always hears itself (distance 0), so a `chat:say` event must come
+  // back to B. A's earlier moves emitted entity:entered/exited internally — those
+  // must NOT reach any client (the perception allowlist drops non-client events).
+  b.ws.send(JSON.stringify({ type: 'say', text: 'ping' }));
+  const heard = await waitFor(() => b.events.some((e) => e.type === 'chat:say' && e.text === 'ping'));
+  check('speaker receives its own chat:say over the wire', heard);
+  const leaked = [...a.events, ...b.events].filter((e) => e.type !== 'chat:say' && e.type !== 'access:denied');
+  check('no internal events leak to clients', leaked.length === 0, leaked.map((e) => e.type).join(',') || 'none');
 
   a.ws.close();
   b.ws.close();

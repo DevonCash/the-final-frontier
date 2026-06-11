@@ -15,20 +15,61 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   createGameServer,
   get,
+  cellOf,
+  neighbors4,
   type GameServer,
   type EntityId,
   type World,
   type Action,
   type Viewport,
+  type GameEvent,
+  type Position,
 } from '../../rlkit/src/index';
 import { buildGameWorld } from './world';
 import { spawnCrew, TILES } from './content';
 import type { Station } from './station';
 import { config } from './config';
+import { perceive } from './perception';
+import { roleOf, setRole, type Job } from './role';
+import { giveItem, spawnIdCard } from './items';
 
-/** Per-player HUD extension carried on `PlayerView.extra` (R6). O₂ now; role/clock land in Epic H/J. */
+/**
+ * Per-player HUD extension carried on `PlayerView.extra` (R6), read per-viewer from
+ * the viewer's OWN entity only — the hidden-fog contract (never read another
+ * player's components, or role/held would leak under fog). O₂ (Epic A), role/held/
+ * targets (Epic J); `clock` is present only when a round-aware host provides it.
+ */
 export interface CrewExtra {
   oxygen?: { current: number; max: number };
+  /** The viewer's own job + secret traitor flag (its role briefing). */
+  role?: { job: Job; traitor: boolean };
+  /** The viewer's first carried item (name + tool kind, for the held-item slot + useOn). */
+  held?: { name: string; kind?: string };
+  /** Adjacent usable entities (doors/lockers) — the useOn interaction prompt's targets. */
+  targets?: Array<{ id: string; cell: number; label: string }>;
+  /** Round phase + seconds left; absent unless the host runs the round FSM (round.ts). */
+  clock?: { phase: 'lobby' | 'setup' | 'shift' | 'departure' | 'reveal'; secondsRemaining?: number };
+}
+
+interface InfoComponent {
+  type: 'info';
+  name: string;
+  [key: string]: unknown;
+}
+interface InventoryComponent {
+  type: 'inventory';
+  items: string[];
+  [key: string]: unknown;
+}
+interface ToolComponent {
+  type: 'tool';
+  kind: string;
+  [key: string]: unknown;
+}
+interface OpenableComponent {
+  type: 'openable';
+  kind: 'door' | 'locker';
+  [key: string]: unknown;
 }
 
 interface ResourcesComponent {
@@ -81,15 +122,54 @@ export function createStationServer(opts: {
     // vacated slots; fall back to any free floor cell only when all are taken.
     const free = station.mark.spawns.find((s) => !isOccupied(w, level.id, s));
     const cell = free ?? nextFreeFloor(w, level.id, tiles, floorIdx);
-    return spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
+    const id = spawnCrew(w, level.id, cell, { id: `crew-${n + 1}`, name: `Crew ${n + 1}` }, config);
+    // Starter loadout so the HUD shows real role/held data on the simple host (Epic J):
+    // a plain crew briefing + a basic ID. The round controller assigns jobs/traitor and
+    // full kits instead when it drives spawns.
+    setRole(w.state.entities.get(id)!, 'crew', false);
+    giveItem(w, id, spawnIdCard(w, `id-${n + 1}`, [...config.access.ids.crew]));
+    return id;
   };
   const spawnPlayer = opts.spawnPlayer ? (w: World) => opts.spawnPlayer!(w, station) : defaultSpawn;
 
   const viewExtra = (w: World, id: EntityId): CrewExtra => {
     const e = w.state.entities.get(id);
-    const pools = e && get<ResourcesComponent>(e, 'resources')?.pools;
-    if (!pools?.oxygen) return {};
-    return { oxygen: { current: Math.round(pools.oxygen.current), max: config.oxygen.max } };
+    if (!e) return {};
+    const extra: CrewExtra = {};
+
+    const pools = get<ResourcesComponent>(e, 'resources')?.pools;
+    if (pools?.oxygen) extra.oxygen = { current: Math.round(pools.oxygen.current), max: config.oxygen.max };
+
+    // Role card: the viewer's own briefing (job + secret traitor flag).
+    const role = roleOf(e);
+    if (role) extra.role = { job: role.job, traitor: role.traitor };
+
+    // Held item: the first carried item — its display name + tool kind (for useOn).
+    const held = get<InventoryComponent>(e, 'inventory')?.items[0];
+    const heldEntity = held ? w.state.entities.get(held) : undefined;
+    if (heldEntity) {
+      const name = get<InfoComponent>(heldEntity, 'info')?.name ?? held!;
+      const kind = get<ToolComponent>(heldEntity, 'tool')?.kind;
+      extra.held = kind ? { name, kind } : { name };
+    }
+
+    // Interaction prompt: usable entities in the viewer's four adjacent cells (within
+    // its own FOV, so no fog leak). Doors/lockers are the useOn targets.
+    const pos = get<Position>(e, 'position');
+    const level = pos && w.state.levels.get(pos.levelId);
+    if (pos && level) {
+      const origin = cellOf({ x: pos.x, y: pos.y }, level.width);
+      const targets: NonNullable<CrewExtra['targets']> = [];
+      for (const nb of neighbors4(origin, level.width, level.height)) {
+        for (const occId of w.services.queries.at(nb, pos.levelId)) {
+          const occ = w.state.entities.get(occId);
+          const open = occ && get<OpenableComponent>(occ, 'openable');
+          if (open) targets.push({ id: occId, cell: nb, label: config.hud.targets[open.kind] });
+        }
+      }
+      if (targets.length) extra.targets = targets;
+    }
+    return extra;
   };
 
   const game = createGameServer<CrewExtra>({
@@ -134,6 +214,13 @@ const DECODERS: Record<string, Decoder> = {
     if (t.kind === 'cell' && Number.isInteger(t.cell)) return { type: 'useOn', actor, ...item, target: { kind: 'cell', cell: t.cell as number } };
     return null;
   },
+  // Local chat (Epic I): trim + length-cap the text; the handler emits a `chat:say`
+  // event that the transport fans out by earshot. Empty/over-long/non-string → drop.
+  say: (msg, actor) => {
+    if (typeof msg.text !== 'string') return null;
+    const text = msg.text.trim().slice(0, config.chat.maxLength);
+    return text ? { type: 'say', actor, text } : null;
+  },
 };
 
 /** Only accept browser clients from localhost; node clients (tests) send no Origin. */
@@ -157,7 +244,8 @@ export function startStationServer(opts: {
 }): RunningServer {
   const { game, viewport } = createStationServer({ seed: opts.seed, fog: opts.fog });
   const sockets = new Map<WebSocket, EntityId>();
-  const lastSent = new Map<WebSocket, string>();
+  const lastSent = new Map<WebSocket, string>(); // last render-frame payload (dedup)
+  const lastExtra = new Map<WebSocket, string>(); // last HUD-extra payload (dedup)
   const needsFrame = new Set<WebSocket>(); // fresh sockets still owed their first frame
   const originOk = opts.allowedOrigin ?? localhostOnly;
 
@@ -170,7 +258,9 @@ export function startStationServer(opts: {
     const id = game.join();
     sockets.set(ws, id);
     needsFrame.add(ws);
-    ws.send(JSON.stringify({ type: 'welcome', playerId: id, viewport }));
+    // `hud` ships the HUD presentation config once so the client paints `extra`
+    // without duplicating any labels/colors/thresholds (config.ts stays canonical).
+    ws.send(JSON.stringify({ type: 'welcome', playerId: id, viewport, hud: config.hud }));
 
     ws.on('message', (data) => {
       let msg: Record<string, unknown>;
@@ -187,6 +277,7 @@ export function startStationServer(opts: {
     ws.on('close', () => {
       sockets.delete(ws);
       lastSent.delete(ws);
+      lastExtra.delete(ws);
       needsFrame.delete(ws);
       game.leave(id);
     });
@@ -197,28 +288,57 @@ export function startStationServer(opts: {
   const MS_PER_TICK = 1000 / config.ticksPerSecond;
   let last = Date.now();
   let acc = 0;
+  let extraAcc = 0; // sim-ticks since the last HUD-extra window (throttle)
   const loop = setInterval(() => {
     const now = Date.now();
     acc += now - last;
     last = now;
     const ticks = Math.min(config.server.maxTickCatchup, Math.floor(acc / MS_PER_TICK));
+    const events: GameEvent[] = [];
     if (ticks > 0) {
       acc -= ticks * MS_PER_TICK;
-      game.tick(ticks);
+      events.push(...game.tick(ticks).events); // events only exist when the world advanced
     }
+    // HUD `extra` rides a throttled cadence (a few Hz) so it doesn't re-send a full
+    // render frame every tick just because O₂ ticked down — the bug that defeated the
+    // frame dedup and flooded the client. Gated globally by sim time; deduped per socket.
+    extraAcc += ticks;
+    const extraDue = extraAcc >= config.server.extraEveryTicks;
+    if (extraDue) extraAcc = 0;
     // Frames can only differ if the world advanced (ticks>0) — including passive
     // changes like O₂ drain that don't go through an action — or if a freshly
     // joined socket still owes its first frame. A loop fire with no elapsed ticks
-    // can't change any existing frame, so skip the build+diff entirely.
+    // can't change any existing frame (and emits no events), so skip entirely.
     if (ticks === 0 && needsFrame.size === 0) return;
+    // Pre-serialize each event once (the payload is socket-independent; only the
+    // per-viewer `perceive` decision differs).
+    const wire = events.map((event) => ({ event, json: JSON.stringify({ type: 'event', event }) }));
     for (const [ws, id] of sockets) {
       if (ws.readyState !== WebSocket.OPEN) continue;
-      if (ticks === 0 && !needsFrame.has(ws)) continue;
+      // Fan out this tick's events, filtered to what this player can hear/see (Epic I).
+      for (const { event, json } of wire) {
+        if (perceive(game, id, event, { hearingRadius: config.hearingRadius })) ws.send(json);
+      }
+      const fresh = needsFrame.has(ws);
+      if (ticks === 0 && !fresh) continue;
       needsFrame.delete(ws);
-      const payload = JSON.stringify({ type: 'view', ...game.viewFor(id, viewport) });
-      if (payload === lastSent.get(ws)) continue; // skip an unchanged frame
-      lastSent.set(ws, payload);
-      ws.send(payload);
+      const view = game.viewFor(id, viewport);
+      // Render frame (cells only): dedup is now effective — a static map sends nothing,
+      // because the fast-changing HUD `extra` no longer rides this payload.
+      const framePayload = JSON.stringify({ type: 'view', frame: view.frame, alive: view.alive });
+      if (framePayload !== lastSent.get(ws)) {
+        lastSent.set(ws, framePayload);
+        ws.send(framePayload);
+      }
+      // HUD extra (O₂/role/held/targets): throttled + deduped, so the cheap HUD update
+      // never forces an expensive canvas redraw on the client.
+      if (view.extra !== undefined && (fresh || extraDue)) {
+        const extraPayload = JSON.stringify({ type: 'extra', extra: view.extra, alive: view.alive });
+        if (extraPayload !== lastExtra.get(ws)) {
+          lastExtra.set(ws, extraPayload);
+          ws.send(extraPayload);
+        }
+      }
     }
   }, MS_PER_TICK);
 

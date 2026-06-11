@@ -25,6 +25,7 @@ import { registerBreathing } from './breathing';
 import { registerItems } from './items';
 import { registerOpenable } from './openable';
 import { registerUseOn } from './useon';
+import { registerSay } from './chat';
 import { registerCorpses } from './corpse';
 import { registerRoles } from './role';
 import { registerPower } from './power';
@@ -62,6 +63,7 @@ function assemble<S>(seed: number, build: (world: World, config: Config) => S): 
   registerCorpses(world); // corpse component + died→corpse reactor + loot bump rule
   registerRoles(world); // role component (job + secret traitor flag) for save validation
   registerUseOn(world); // useOn handler + tool rules (crowbar/emag + welder/wrench/cutters/cable)
+  registerSay(world); // local `say` action → `chat:say` event (fanned out by earshot)
   registerContent(world);
   const station = build(world, config);
   registerAtmos(world, config);
