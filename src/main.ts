@@ -36,12 +36,15 @@ let playerId: string | undefined;
 
 // The HUD presentation config shipped in `welcome` (mirrors config.ts `HudConfig`).
 interface HudConfig {
-  oxygen: { width: number; fill: string; low: string; lowFraction: number };
+  oxygen: { fill: string; low: string; lowFraction: number };
   roles: Record<string, { label: string; color: string }>;
   targets: { door: string; locker: string; key: string };
   clock: Record<string, string>;
 }
 let hud: HudConfig | undefined;
+
+// Cap the chat panel's DOM nodes so a long session can't grow it unboundedly.
+const MAX_CHAT_LINES = 100;
 
 interface CrewExtra {
   oxygen?: { current: number; max: number };
@@ -103,10 +106,11 @@ function paintHud(extra: CrewExtra | undefined, alive: boolean): void {
   held = extra?.held;
   heldEl.textContent = held ? held.name : '—';
 
-  // Interaction prompt: the first adjacent usable target, if any.
+  // Interaction prompt: the first adjacent usable target, but only when the held item
+  // is actually a tool — `useOn` needs a tool kind, so an ID card can't act on a door.
   target = extra?.targets?.[0];
-  if (alive && target && hud) {
-    promptEl.textContent = `[${hud.targets.key}] use ${held ? held.name : 'hands'} on ${target.label}`;
+  if (alive && target && hud && held?.kind) {
+    promptEl.textContent = `[${hud.targets.key}] use ${held.name} on ${target.label}`;
   } else {
     promptEl.textContent = '';
   }
@@ -122,16 +126,22 @@ function appendChat(speaker: string | undefined, text: string | undefined): void
   who.textContent = `${speaker === playerId ? 'you' : (speaker ?? '???')}: `;
   line.append(who, document.createTextNode(text));
   chatEl.append(line);
+  while (chatEl.childElementCount > MAX_CHAT_LINES) chatEl.firstElementChild!.remove();
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
 let denyTimer: ReturnType<typeof setTimeout> | undefined;
 /** Flash the prompt red briefly when a useOn was denied (Epic I `access:denied`). */
 function flashDenied(): void {
+  const prev = promptEl.textContent;
   promptEl.classList.add('denied');
   promptEl.textContent = 'access denied';
   clearTimeout(denyTimer);
-  denyTimer = setTimeout(() => promptEl.classList.remove('denied'), 600);
+  denyTimer = setTimeout(() => {
+    promptEl.classList.remove('denied');
+    // Restore the prompt if a fresh frame hasn't already repainted it (static world).
+    if (promptEl.textContent === 'access denied') promptEl.textContent = prev;
+  }, 600);
 }
 
 function connect(): void {
@@ -185,10 +195,11 @@ window.addEventListener('keydown', (ev) => {
     ev.preventDefault();
     return;
   }
-  // Interact (Epic J): use the held tool on the adjacent target. The server validates
-  // tool/adjacency and beeps `access:denied` if it can't — the client doesn't judge.
-  if ((ev.key === 'e' || ev.key === 'E') && target) {
-    socket.send(JSON.stringify({ type: 'useOn', target: { kind: 'entity', id: target.id }, item: held?.kind }));
+  // Interact (Epic J): use the held tool on the adjacent target. Gated on a tool kind
+  // (matches the prompt). The server validates tool/adjacency and beeps `access:denied`
+  // if it can't — the client doesn't judge.
+  if ((ev.key === 'e' || ev.key === 'E') && target && held?.kind) {
+    socket.send(JSON.stringify({ type: 'useOn', target: { kind: 'entity', id: target.id }, item: held.kind }));
     ev.preventDefault();
   }
 });

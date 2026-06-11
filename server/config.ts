@@ -112,9 +112,8 @@ export interface RenderConfig {
  * truth (no styling literals in the client). No gradients (a flat fill/low pair).
  */
 export interface HudConfig {
-  /** O₂ bar: segment count + fill/low colors, switching to `low` below `lowFraction`. */
+  /** O₂ bar fill/low colors, switching to `low` below `lowFraction` (0..1). */
   readonly oxygen: {
-    readonly width: number;
     readonly fill: string;
     readonly low: string;
     readonly lowFraction: number;
@@ -248,7 +247,7 @@ export const config: Config = {
   chat: { maxLength: 200 },
   emagCharges: 3,
   hud: {
-    oxygen: { width: 16, fill: '#6cf', low: '#f55', lowFraction: 0.25 },
+    oxygen: { fill: '#6cf', low: '#f55', lowFraction: 0.25 },
     roles: {
       captain: { label: 'Captain', color: '#fd5' },
       engineer: { label: 'Engineer', color: '#fa3' },
